@@ -38,10 +38,14 @@ private[highlighter] struct Rule
     inner_key: Option[string]
     content_name: Option[string]
     is_self: bool
+    end_last: bool
 
 // The `$self` marker: never matched, and replaced by the top-level rules wherever a `begin` rule's
 // inner patterns are taken.
-private self_marker() -> Rule = Rule(None, "", None, false, None, None, false, None, None, None, None, true)
+private self_marker() -> Rule = Rule(None, "", None, false, None, None, false, None, None, None, None, true, false)
+
+// The key a capture's own `patterns` are filed under.
+private[highlighter] capture_key(c: Capture) -> string = s"\u{0}capture_${c.id}"
 
 private[highlighter] struct Resolved
     top: Buf[Rule]
@@ -49,7 +53,7 @@ private[highlighter] struct Resolved
     warnings: Buf[string]
 
 private[highlighter] resolve(g: Grammar) -> Resolved
-    var r = Resolver(g.repository, map(), map(), buf(), buf(), map(), g.ids)
+    var r = Resolver(g.repository, map(), map(), buf(), buf(), map())
     var before: Map[string, usize] = map()
     var passes = 0
     var done = false
@@ -106,7 +110,6 @@ private struct Resolver
     visiting: Buf[string]
 
     compiled: Map[string, Option[&Regex]]
-    next_id: usize
 
     // A pattern compiled once per source text, across every pass. One that does not compile is
     // reported in the warnings, once, and the rule holding it is dropped.
@@ -159,7 +162,9 @@ private struct Resolver
 
         p.include match
             Some(inc) ->
-                if inc == "$self"
+                // `$base` is the grammar a document is highlighted with, which for a grammar on its
+                // own is this one.
+                if inc == "$self" || inc == "$base"
                     out.push(self_marker())
                     return out
 
@@ -171,7 +176,9 @@ private struct Resolver
         p.match_rx match
             Some(src) ->
                 self.regex(src) match
-                    Some(re) -> out.push(Rule(p.name, src, Some(re), false, None, None, false, None, p.captures, None, None, false))
+                    Some(re) ->
+                        self.capture_lists(p.captures)
+                        out.push(Rule(p.name, src, Some(re), false, None, None, false, None, p.captures, None, None, false, false))
                     None -> ()
 
                 return out
@@ -202,12 +209,9 @@ private struct Resolver
             Some(e) -> e
             None -> return buf()
 
-        // A repository entry is taken afresh each time it is resolved, with an identity of its own.
-        val p = Pattern(self.fresh(), entry.name, entry.match_rx, entry.begin, entry.end, entry.captures, entry.begin_captures, entry.end_captures, entry.patterns, entry.include, entry.content_name)
-
         self.visiting.push(key)
 
-        val rules = self.one(p)
+        val rules = self.one(entry)
 
         self.visiting.pop()
         self.cache.put(key, rules)
@@ -227,14 +231,23 @@ private struct Resolver
                 if has_back_references(e) then refers = true else end_regex = self.regex(e)
             None -> ()
 
-        val captures = if p.begin_captures.is_some() then p.begin_captures else p.captures
+        // `captures` stands for whichever of `beginCaptures` and `endCaptures` is absent.
+        val begin_caps = if p.begin_captures.is_some() then p.begin_captures else p.captures
+        val end_caps = if p.end_captures.is_some() then p.end_captures else p.captures
 
-        Rule(p.name, src, Some(re), true, p.end, end_regex, refers, p.end_captures, captures, Some(inner), p.content_name, false)
+        self.capture_lists(begin_caps)
+        self.capture_lists(end_caps)
+
+        Rule(p.name, src, Some(re), true, p.end, end_regex, refers, end_caps, begin_caps, Some(inner), p.content_name, false, p.end_last)
     end begin_rule
 
-    fresh(*self) -> usize
-        val id = self.next_id
+    // The rules of every capture that has `patterns`, filed under the capture's own key.
+    capture_lists(*self, caps: Option[Buf[Capture]])
+        val cs = caps match
+            Some(cs) -> cs
+            None -> return
 
-        self.next_id += 1
-        id
+        for c in cs.view()
+            if c.patterns.is_some() then self.cached(capture_key(c), c.patterns.unwrap())
+    end capture_lists
 end Resolver

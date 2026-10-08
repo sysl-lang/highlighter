@@ -16,17 +16,21 @@ import sysl.container.{Map, map}
 // inside a `captures` object, and VS Code ignores them the same way.
 
 /** One entry of a `captures`, `beginCaptures` or `endCaptures` object: the group it names, as the
- * key was written, and the scope it gives that group's text.
+ * key was written, the scope it gives that group's text, and the rules that text is tokenized with
+ * again, where it has `patterns`.
  */
 struct Capture
+    id: usize
     key: string
     name: Option[string]
+    content_name: Option[string]
+    patterns: Option[Buf[Pattern]]
 
 /** One rule of a grammar — a `match`, a `begin`/`end` pair, an `include`, or a bare list of
  * `patterns`. A repository entry has the same shape.
  *
  * `id` is the rule's identity, which a `begin` rule's inner patterns are filed under while the
- * grammar is resolved.
+ * grammar is resolved — the same however many times the rule is reached.
  */
 struct Pattern
     id: usize
@@ -41,6 +45,9 @@ struct Pattern
     include: Option[string]
     content_name: Option[string]
 
+    // `applyEndPatternLast`: the `end` loses a tie with an inner rule rather than winning it.
+    end_last: bool
+
 /** A whole grammar: the scope every token of the language carries first, its top-level rules, and
  * the repository `#name` includes are resolved against.
  */
@@ -50,10 +57,6 @@ struct Grammar
     file_types: Option[Buf[string]]
     patterns: Buf[Pattern]
     repository: Map[string, Pattern]
-
-    // How many identities the decoder handed out, so that a resolver making fresh rules continues
-    // past them.
-    private[highlighter] ids: usize
 
 /** A grammar read from its JSON text, or why it is not one. */
 grammar_from_json(text: string) -> Result[Grammar, string]
@@ -102,7 +105,7 @@ private struct Decoder
             Some(_) -> return Err("'repository' is not an object")
             None -> ()
 
-        Ok(Grammar(scope, name, file_types, patterns, repo, self.next))
+        Ok(Grammar(scope, name, file_types, patterns, repo))
     end grammar
 
     strings(*self, o: Json, key: string) -> Result[Option[Buf[string]], string]
@@ -140,7 +143,7 @@ private struct Decoder
 
         val id = self.fresh()
 
-        Ok(Pattern(id, opt_string(o, "name")?, opt_string(o, "match")?, opt_string(o, "begin")?, opt_string(o, "end")?, self.captures(o, "captures")?, self.captures(o, "beginCaptures")?, self.captures(o, "endCaptures")?, self.pattern_list(o, "patterns")?, opt_string(o, "include")?, opt_string(o, "contentName")?))
+        Ok(Pattern(id, opt_string(o, "name")?, opt_string(o, "match")?, opt_string(o, "begin")?, opt_string(o, "end")?, self.captures(o, "captures")?, self.captures(o, "beginCaptures")?, self.captures(o, "endCaptures")?, self.pattern_list(o, "patterns")?, opt_string(o, "include")?, opt_string(o, "contentName")?, end_last(o)))
     end pattern
 
     // The lenient half: an entry that is not a capture object — or is one holding a key of the wrong
@@ -151,8 +154,8 @@ private struct Decoder
                 var out: Buf[Capture] = buf()
 
                 for m in members.view()
-                    self.capture(m.value) match
-                        Some(name) -> put_capture(out, Capture(m.key, name))
+                    self.capture(m.key, m.value) match
+                        Some(c) -> put_capture(out, c)
                         None -> ()
 
                 Ok(Some(out))
@@ -161,16 +164,20 @@ private struct Decoder
             None -> Ok(None)
     end captures
 
-    // `Some(name)` for a capture object, `None` for anything that is not one.
-    capture(*self, v: Json) -> Option[Option[string]]
+    // The capture a value describes, or `None` for anything that is not one.
+    capture(*self, key: string, v: Json) -> Option[Capture]
         if !v.is_object() then return None
 
         val name = opt_string(v, "name") match
             Ok(n) -> n
             Err(_) -> return None
 
+        val content = opt_string(v, "contentName") match
+            Ok(n) -> n
+            Err(_) -> return None
+
         self.pattern_list(v, "patterns") match
-            Ok(_) -> Some(name)
+            Ok(ps) -> Some(Capture(self.fresh(), key, name, content, ps))
             Err(_) -> None
     end capture
 end Decoder
@@ -183,6 +190,13 @@ private put_capture(out: Buf[Capture], c: Capture)
             return
 
     out.push(c)
+
+// `applyEndPatternLast`, which grammars write as `1` or `true`.
+private end_last(o: Json) -> bool
+    o.get("applyEndPatternLast") match
+        Some(Json.Bool(b)) -> b
+        Some(Json.Int(n)) -> n != 0
+        _ -> false
 
 private opt_string(o: Json, key: string) -> Result[Option[string], string]
     o.get(key) match

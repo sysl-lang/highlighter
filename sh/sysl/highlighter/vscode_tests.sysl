@@ -1,0 +1,192 @@
+module sh.sysl.highlighter
+@tests
+
+import sysl.text.{Search, join}
+
+// Where this tokenizer follows vscode-textmate and the Scala port did not — each a rule VS Code's
+// grammars are written against, and each test one the Scala port fails.
+
+private hl(json: string) -> Highlighter = from_json(json, Classes("hl-")).expect("the grammar loads")
+
+private scopes_of_token(h: Highlighter, code: string, text: string) -> string
+    for line in h.tokens(code).view()
+        for t in line.view()
+            if t.text == text then return join(t.scopes.view(), " ")
+
+    panic(s"no token reads '${text}'")
+
+// --- a line is matched with its newline ---
+
+@test("newline: a rule ending on \\n closes at the end of its line")
+newline_closes()
+    val g = raw"""
+        {
+          "scopeName": "source.nl",
+          "patterns": [
+            { "begin": "#", "end": "\\n", "name": "comment.line.nl" },
+            { "match": "\\bkey\\b", "name": "keyword.nl" }
+          ]
+        }
+        """
+
+    assert_eq(hl(g).highlight("# note\nkey"), "<span class=\"hl-comment\"># note</span>\n<span class=\"hl-keyword\">key</span>")
+
+@test("newline: YAML's comment does not run on into the next line")
+newline_yaml()
+    assert(load("yaml").highlight("# hello\nkey: value").contains("<span class=\"hl-function\">key</span>"))
+
+@test("newline: the newline itself is in no token")
+newline_not_in_tokens()
+    for line in load("yaml").tokens("# hello\nkey: value").view()
+        for t in line.view()
+            assert(!t.text.contains("\n"))
+
+// --- \G holds where the last begin ended ---
+
+private anchored() -> string = raw"""
+    {
+      "scopeName": "source.g",
+      "patterns": [
+        { "begin": "<", "end": "(?!\\G)", "name": "meta.tag.g",
+          "patterns": [ { "match": "\\G\\w+", "name": "keyword.g" } ] },
+        { "match": "\\G\\w+", "name": "string.g" }
+      ]
+    }
+    """
+
+@test("\\G: holds where the begin match ended")
+anchor_after_begin()
+    assert_eq(hl(anchored()).highlight("<ab cd"), "&lt;<span class=\"hl-keyword\">ab</span> cd")
+
+@test("\\G: holds nowhere at the start of a line")
+anchor_not_at_line_start()
+    assert_eq(hl(anchored()).highlight("ab\ncd"), "ab\ncd")
+
+// At every line's start while the pair is open — VS Code answers the same for this grammar.
+@test("\\G: a begin match running to the end of its line makes it hold at each later line's start")
+anchor_after_eol_begin()
+    val g = raw"""
+        {
+          "scopeName": "source.eol",
+          "patterns": [
+            { "begin": "=\\n", "end": "^;", "name": "meta.block.eol",
+              "patterns": [ { "match": "\\G\\w+", "name": "keyword.eol" } ] }
+          ]
+        }
+        """
+
+    assert_eq(hl(g).highlight("=\nab cd\nef\n;"), "=\n<span class=\"hl-keyword\">ab</span> cd\n<span class=\"hl-keyword\">ef</span>\n;")
+
+// --- a name may hold several scopes, and $N ---
+
+@test("names: a name holding several scopes is that many scopes, the last innermost")
+names_several_scopes()
+    assert(load("json").highlight("{\"k\": 1}").contains("<span class=\"hl-type\">k</span>"))
+    assert_eq(scopes_of_token(load("json"), "{\"k\": 1}", "k"), "source.json meta.structure.dictionary.json string.json support.type.property-name.json")
+
+@test("names: $N stands for the group's text")
+names_capture_reference()
+    val g = raw"""
+        {
+          "scopeName": "source.n",
+          "patterns": [ { "match": "(\\w+)!", "name": "keyword.$1.n" }, { "match": "@(\\w+)", "name": "entity.${1:/upcase}.n" } ]
+        }
+        """
+    val h = hl(g)
+
+    assert_eq(scopes_of_token(h, "go!", "go!"), "source.n keyword.go.n")
+    assert_eq(scopes_of_token(h, "@ab", "@ab"), "source.n entity.AB.n")
+
+// --- captures ---
+
+@test("captures: a begin/end rule's captures apply to its end as well")
+captures_apply_to_end()
+    val g = raw"""
+        {
+          "scopeName": "source.c",
+          "patterns": [ { "begin": "<", "end": ">", "captures": { "0": { "name": "punctuation.c" } } } ]
+        }
+        """
+
+    assert_eq(hl(g).highlight("<a>"), "<span class=\"hl-punctuation\">&lt;</span>a<span class=\"hl-punctuation\">&gt;</span>")
+
+@test("captures: a capture's patterns tokenize its text again")
+captures_retokenized()
+    val g = raw"""
+        {
+          "scopeName": "source.r",
+          "patterns": [
+            { "match": "(\\w+)\\(",
+              "captures": { "1": { "name": "entity.name.function.r", "patterns": [ { "match": "get", "name": "keyword.r" } ] } } }
+          ]
+        }
+        """
+    val h = hl(g)
+
+    assert_eq(h.highlight("getx("), "<span class=\"hl-keyword\">get</span><span class=\"hl-function\">x</span>(")
+    assert_eq(scopes_of_token(h, "getx(", "get"), "source.r entity.name.function.r keyword.r")
+
+@test("captures: group 0's scope stays beneath the groups inside it")
+captures_group_zero_beneath()
+    val g = raw"""
+        {
+          "scopeName": "source.z",
+          "patterns": [ { "match": "(a)b", "captures": { "0": { "name": "meta.z" }, "1": { "name": "keyword.z" } } } ]
+        }
+        """
+
+    assert_eq(scopes_of_token(hl(g), "ab", "a"), "source.z meta.z keyword.z")
+
+@test("captures: Go's function name is found by a capture's own patterns")
+captures_go()
+    assert(load("go").highlight("func main() {}").contains("<span class=\"hl-function\">main</span>"))
+
+// --- applyEndPatternLast ---
+
+private end_last(flag: string) -> string = s"{ \"scopeName\": \"source.l\", \"patterns\": [ { \"begin\": \"\\\\[\", \"end\": \"\\\\]\", \"name\": \"meta.l\", ${flag} \"patterns\": [ { \"match\": \"\\\\]\\\\]\", \"name\": \"keyword.l\" } ] } ] }"
+
+@test("applyEndPatternLast: the end wins a tie by default")
+end_wins_tie()
+    assert(!hl(end_last("")).highlight("[a]] b").contains("hl-keyword"))
+
+@test("applyEndPatternLast: under it an inner rule wins the tie")
+end_last_loses_tie()
+    assert(hl(end_last("\"applyEndPatternLast\": 1,")).highlight("[a]] b").contains("<span class=\"hl-keyword\">]]</span>"))
+
+// --- the loop guards ---
+
+@test("guards: a pair that opens and closes at one place matching nothing stays open, and the line ends")
+guard_pair_at_one_place()
+    val g = raw"""
+        {
+          "scopeName": "source.p",
+          "patterns": [ { "begin": "(?=x)", "end": "(?=x)", "name": "string.p" } ]
+        }
+        """
+
+    assert_eq(hl(g).highlight("axy\nz"), "a<span class=\"hl-string\">xy</span>\n<span class=\"hl-string\">z</span>")
+
+@test("guards: a pair opening again where it already is, matching nothing, does not")
+guard_reopen()
+    val g = raw"""
+        {
+          "scopeName": "source.o",
+          "patterns": [ { "begin": "(?=y)", "end": "z", "name": "string.o", "patterns": [ { "include": "$self" } ] } ]
+        }
+        """
+
+    assert_eq(hl(g).highlight("xy"), "x<span class=\"hl-string\">y</span>")
+
+@test("$base: in a grammar on its own it is the grammar itself")
+base_include()
+    val g = raw"""
+        {
+          "scopeName": "source.b",
+          "patterns": [
+            { "match": "\\bkw\\b", "name": "keyword.b" },
+            { "begin": "\\(", "end": "\\)", "patterns": [ { "include": "$base" } ] }
+          ]
+        }
+        """
+
+    assert(hl(g).highlight("(kw)").contains("<span class=\"hl-keyword\">kw</span>"))

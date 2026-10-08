@@ -1,0 +1,82 @@
+module sh.sysl.highlighter
+@tests
+
+import sysl.buf.{Buf, buf}
+import sysl.fs.{entries, read_bytes}
+import sysl.text.{Search, from_utf8, join, split}
+
+// The corpus in `equivalence/` — a page of each of the thirteen languages and the Scala suite's own
+// inputs — highlighted here and by Visual Studio Code: `<name>.vscode.html` is what VS Code's
+// tokenizer (vscode-textmate 9.3.2 on vscode-oniguruma 2.0.1) makes of `<name>.txt` with the same
+// grammar, rendered as `Classes("hl-")` renders. `tools/vscode-oracle.js` writes them.
+//
+// **Every line agrees byte for byte but two**, and those two are the one thing deliberately not
+// here: HTML's `<style>` and `<script>` bodies, which VS Code highlights by including the CSS and
+// JavaScript grammars. A grammar's includes of another grammar are not followed, so that text is
+// plain.
+
+private corpus_dir() -> string
+    val here = __FILE__
+    val cut = here.last_index_of("/sh/sysl/highlighter/").expect("this file sits under sh/sysl/highlighter")
+
+    s"${here[0..<cut]}/equivalence"
+
+private read_text(p: string) -> string = from_utf8(read_bytes(p).expect(s"${p} reads")).expect(s"${p} is UTF-8")
+
+// The 1-based lines of `name` that differ from VS Code's.
+private differing(name: string) -> Buf[usize]
+    val dir = corpus_dir()
+    val lang = name[0..<name.index_of(".").unwrap()]
+    val ours = split(load(lang).highlight(read_text(s"${dir}/${name}.txt")), "\n")
+    val theirs = split(read_text(s"${dir}/${name}.vscode.html"), "\n")
+    var out: Buf[usize] = buf()
+
+    assert_eq(ours.len, theirs.len)
+
+    for i in 0..<ours.len
+        if ours[i] != theirs[i] then out.push(i + 1)
+
+    out
+end differing
+
+private corpus() -> Buf[string]
+    var out: Buf[string] = buf()
+
+    for f in entries(corpus_dir()).expect("the corpus lists").view()
+        if f.ends_with(".txt") then out.push(f[0..<f.len - 4])
+
+    out
+
+@test("the corpus holds 24 files, each with VS Code's rendering beside it")
+corpus_complete()
+    val names = corpus()
+
+    assert_eq(names.len(), 24)
+
+    for n in names.view()
+        assert(read_bytes(s"${corpus_dir()}/${n}.vscode.html").is_ok(), n)
+
+@test("every corpus file but html.1 renders exactly as VS Code renders it")
+corpus_agrees()
+    var bad: Buf[string] = buf()
+
+    for n in corpus().view()
+        if n != "html.1"
+            val d = differing(n)
+
+            if d.len() > 0 then bad.push(s"${n}: lines ${d}")
+
+    assert(bad.len() == 0, join(bad.view(), "; "))
+
+@test("html.1 differs from VS Code only in the embedded style and script bodies, which are plain")
+corpus_html_embedded()
+    val d = differing("html.1")
+
+    assert_eq(d.len(), 2)
+    assert_eq(d[0], 8)
+    assert_eq(d[1], 21)
+
+    val ours = split(load("html").highlight(read_text(s"${corpus_dir()}/html.1.txt")), "\n")
+
+    assert_eq(ours[7], "    body { margin: 0; color: #333; }")
+    assert_eq(ours[20], "    const x = 1; console.log(&quot;hi&quot;, x);")

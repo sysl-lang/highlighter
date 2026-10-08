@@ -133,16 +133,23 @@ python_string_closes()
 
 // --- character boundaries ---
 
-@test("a zero-length match takes one whole character, not one byte")
-zero_length_takes_a_character()
+// VS Code's guard, and the Scala port's was different: it took one character and went on. A rule
+// that matched nothing where the line already stood would match there for ever, so the line stops
+// being matched and keeps the scopes it has.
+@test("a rule that matches nothing where the line stands ends the line's matching, as in VS Code")
+zero_length_ends_the_line()
     val g = raw"""
         {
           "scopeName": "source.zw",
-          "patterns": [ { "match": "(?=é)", "name": "meta.zw" } ]
+          "patterns": [ { "match": "(?=é)", "name": "meta.zw" }, { "match": "é", "name": "keyword.zw" } ]
         }
         """
+    val h = hl(g)
 
-    assert_eq(hl(g).highlight("aéé"), "aéé")
+    assert_eq(h.highlight("aéé"), "aéé")
+    assert_eq(h.highlight("é\né"), "é\né")
+    assert_eq(h.tokens("aéé")[0].len(), 1)
+    assert_eq(h.tokens("aéé")[0][0].text, "aéé")
 
 @test("a zero-length match at the end of a line ends the line")
 zero_length_at_line_end()
