@@ -1,0 +1,203 @@
+module sh.sysl.highlighter
+
+import sysl.buf.{Buf, buf}
+import sysl.text.{Search, StrBuilder, str_builder}
+
+/** How `highlight` writes a token.
+ *
+ * - `Classes(prefix)` — `<span class="<prefix><category>">`, for a page whose stylesheet colours
+ *   the categories. `classes()` is the `hl-` prefix.
+ * - `Inline(theme)` — `<span style="color:<colour>">`, for HTML that has to carry its own colours.
+ */
+enum RenderMode
+    Classes(prefix: string)
+    Inline(theme: Theme)
+
+/** `Classes` with the `hl-` prefix — the default. */
+classes() -> RenderMode = Classes("hl-")
+
+/** A grammar ready to highlight with, and how it writes HTML. */
+struct Highlighter
+    private tk: Tokenizer
+    mode: RenderMode
+
+    /** Every pattern of the grammar that did not compile, with Oniguruma's reason — a rule holding one
+     * is left out and the rest of the grammar still works. Empty when every pattern compiled, which is
+     * the case for every grammar in VS Code's own collection.
+     */
+    load_warnings(self) -> Buf[string] = self.tk.warnings
+
+    /** `code` as HTML: each line's tokens, escaped, each inside a `<span>` naming its category where
+     * it has one, and the lines joined by `"\n"`. No `<pre>` or `<code>` is written around it.
+     */
+    highlight(self, code: string) -> string
+        var out = str_builder()
+        var first = true
+
+        for line in self.tk.tokenize(code).view()
+            if !first then out.push("\n")
+            first = false
+
+            for t in merge(line).view()
+                self.render(&out, t)
+
+        out.finish()
+    end highlight
+
+    /** `code` as tokens, one list per source line, adjacent tokens with the same scopes merged — the
+     * structured form of `highlight`, for a caller rendering the tokens itself, to a terminal or a
+     * PDF. There is one list per line of `code`, and each list's texts concatenated are that line.
+     */
+    tokens(self, code: string) -> Buf[Buf[Token]]
+        var out: Buf[Buf[Token]] = buf()
+
+        for line in self.tk.tokenize(code).view()
+            out.push(merge(line))
+
+        out
+
+    /** `category(scope)`, as a method beside `tokens`. */
+    category(self, scope: string) -> string = category(scope)
+
+    /** The rendering category of a token: `category` of its innermost scope. */
+    category_of(self, t: Token) -> string = category(innermost(t))
+
+    private render(self, out: *StrBuilder, t: Token)
+        if t.text.len == 0 then return
+
+        val text = escape_html(t.text)
+        val scope = innermost(t)
+
+        self.mode match
+            Classes(prefix) ->
+                val cat = if scope.len == 0 then "" else category(scope)
+
+                if cat.len > 0
+                    out.push("<span class=\"")
+                    out.push(prefix)
+                    out.push(cat)
+                    out.push("\">")
+                    out.push(text)
+                    out.push("</span>")
+                else
+                    out.push(text)
+            Inline(theme) ->
+                val colour = colour_of(category(scope), theme)
+
+                if colour.len > 0
+                    out.push("<span style=\"color:")
+                    out.push(colour)
+                    out.push("\">")
+                    out.push(text)
+                    out.push("</span>")
+                else
+                    out.push(text)
+    end render
+end Highlighter
+
+/** A highlighter over a grammar already read. */
+highlighter(g: Grammar, mode: RenderMode = classes()) -> Highlighter = Highlighter(tokenizer(g), mode)
+
+/** A highlighter over a grammar's JSON text — a `.tmLanguage.json` file — or why it is not one. */
+from_json(text: string, mode: RenderMode = classes()) -> Result[Highlighter, string]
+    val g = grammar_from_json(text)?
+
+    Ok(highlighter(g, mode))
+
+/** The rendering category of a TextMate scope — `keyword`, `string`, `comment`, `number`, `type`,
+ * `function`, `variable` or `punctuation` — or `""` where the scope carries no colour of its own.
+ * The first segment decides, and a few look further:
+ *
+ * | scope begins | category |
+ * |---|---|
+ * | `keyword`, `storage` | `keyword` |
+ * | `string` | `string` |
+ * | `comment` | `comment` |
+ * | `constant` | `number` where the scope holds `numeric`, else `variable` |
+ * | `entity` | `type` where it holds `name.type`, else `function` |
+ * | `variable` | `variable` |
+ * | `support` | `type` where it holds `type`, `function` where it holds `function`, else none |
+ * | `punctuation` | `punctuation` |
+ */
+category(scope: string) -> string
+    val head = scope.index_of(".") match
+        Some(i) -> scope[0..<i]
+        None -> scope
+
+    if head == "keyword" || head == "storage" then return "keyword"
+    if head == "string" then return "string"
+    if head == "comment" then return "comment"
+    if head == "constant" then return if scope.contains("numeric") then "number" else "variable"
+    if head == "entity" then return if scope.contains("name.type") then "type" else "function"
+    if head == "variable" then return "variable"
+
+    if head == "support"
+        if scope.contains("type") then return "type"
+        if scope.contains("function") then return "function"
+
+    if head == "punctuation" then return "punctuation"
+
+    ""
+end category
+
+/** `&`, `<`, `>` and `"` written as entities, and nothing else changed. */
+escape_html(s: string) -> string
+    val b = s.bytes
+    var out = str_builder()
+    var lit: usize = 0
+
+    for i in 0..<b.len
+        val e = entity(b[i])
+
+        if e.len > 0
+            out.push(s[lit..<i])
+            out.push(e)
+            lit = i + 1
+
+    if lit == 0 then return s
+
+    out.push(s[lit..])
+    out.finish()
+end escape_html
+
+private entity(c: u8) -> string
+    if c == u8('&') then return "&amp;"
+    if c == u8('<') then return "&lt;"
+    if c == u8('>') then return "&gt;"
+    if c == u8('"') then return "&quot;"
+
+    ""
+
+private innermost(t: Token) -> string = if t.scopes.len() > 0 then t.scopes[t.scopes.len() - 1] else ""
+
+private colour_of(cat: string, theme: Theme) -> string
+    if cat == "" then return ""
+    if cat == "keyword" then return theme.keyword
+    if cat == "string" then return theme.string
+    if cat == "comment" then return theme.comment
+    if cat == "number" then return theme.number
+    if cat == "type" then return theme.`type`
+    if cat == "function" then return theme.function
+    if cat == "variable" then return theme.variable
+    if cat == "operator" then return theme.operator
+    if cat == "punctuation" then return theme.punctuation
+
+    theme.fallback
+end colour_of
+
+// Adjacent tokens with the same scopes, joined into one.
+private merge(tokens: Buf[Token]) -> Buf[Token]
+    var out: Buf[Token] = buf()
+
+    for t in tokens.view()
+        val n = out.len()
+
+        if n > 0 && same_scopes(out[n - 1].scopes, t.scopes)
+            val prev = out[n - 1]
+
+            out[n - 1] = Token(prev.text + t.text, prev.scopes)
+        else
+            out.push(t)
+
+    out
+end merge

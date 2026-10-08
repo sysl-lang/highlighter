@@ -1,0 +1,43 @@
+module sh.sysl.highlighter
+
+/** The colour of each rendering category, as a CSS colour, for `Inline` rendering. `fallback` is
+ * the colour of a category the others do not name.
+ */
+struct Theme
+    keyword: string
+    string: string
+    comment: string
+    number: string
+    `type`: string
+    function: string
+    variable: string
+    operator: string
+    punctuation: string
+    fallback: string
+
+/** Atom's One Dark — the default theme. */
+one_dark() -> Theme = Theme("#c678dd", "#98c379", "#5c6370", "#d19a66", "#e5c07b", "#61afef", "#e06c75", "#56b6c2", "#abb2bf", "#abb2bf")
+
+one_light() -> Theme = Theme("#a626a4", "#50a14f", "#a0a1a7", "#986801", "#c18401", "#4078f2", "#e45649", "#0184bc", "#383a42", "#383a42")
+
+monokai() -> Theme = Theme("#f92672", "#e6db74", "#75715e", "#ae81ff", "#a6e22e", "#a6e22e", "#f8f8f2", "#f92672", "#f8f8f2", "#f8f8f2")
+
+dracula() -> Theme = Theme("#ff79c6", "#f1fa8c", "#6272a4", "#bd93f9", "#8be9fd", "#50fa7b", "#f8f8f2", "#ff79c6", "#f8f8f2", "#f8f8f2")
+
+solarized_dark() -> Theme = Theme("#859900", "#2aa198", "#586e75", "#d33682", "#b58900", "#268bd2", "#cb4b16", "#859900", "#839496", "#839496")
+
+solarized_light() -> Theme = Theme("#859900", "#2aa198", "#93a1a1", "#d33682", "#b58900", "#268bd2", "#cb4b16", "#859900", "#657b83", "#657b83")
+
+github_dark() -> Theme = Theme("#ff7b72", "#a5d6ff", "#8b949e", "#79c0ff", "#ffa657", "#d2a8ff", "#ffa657", "#ff7b72", "#c9d1d9", "#c9d1d9")
+
+github_light() -> Theme = Theme("#cf222e", "#0a3069", "#6e7781", "#0550ae", "#953800", "#8250df", "#953800", "#cf222e", "#24292f", "#24292f")
+
+nord() -> Theme = Theme("#81a1c1", "#a3be8c", "#616e88", "#b48ead", "#8fbcbb", "#88c0d0", "#d8dee9", "#81a1c1", "#eceff4", "#d8dee9")
+
+gruvbox_dark() -> Theme = Theme("#fb4934", "#b8bb26", "#928374", "#d3869b", "#fabd2f", "#8ec07c", "#83a598", "#fe8019", "#ebdbb2", "#ebdbb2")
+
+gruvbox_light() -> Theme = Theme("#9d0006", "#79740e", "#928374", "#8f3f71", "#b57614", "#427b58", "#076678", "#af3a03", "#3c3836", "#3c3836")
+
+tokyo_night() -> Theme = Theme("#bb9af7", "#9ece6a", "#565f89", "#ff9e64", "#2ac3de", "#7aa2f7", "#c0caf5", "#89ddff", "#a9b1d6", "#a9b1d6")
+
+catppuccin_mocha() -> Theme = Theme("#cba6f7", "#a6e3a1", "#6c7086", "#fab387", "#f9e2af", "#89b4fa", "#f38ba8", "#89dceb", "#cdd6f4", "#cdd6f4")

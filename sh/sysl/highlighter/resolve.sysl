@@ -1,0 +1,240 @@
+module sh.sysl.highlighter
+
+import sh.sysl.oniguruma.{Regex, compile, describe}
+import sysl.buf.{Buf, buf}
+import sysl.container.{Map, map}
+import sysl.text.Search
+
+// Turning a grammar's rules into the lists the tokenizer matches against.
+//
+// **Every `include` is resolved once, ahead of tokenizing**, into a flat list of compiled rules per
+// key: `$top` for the grammar's own patterns, a repository name for each `#name`, and one key per
+// `begin` rule for the patterns that apply inside it. `$self` stays a marker, expanded to the
+// top-level list when a `begin` rule pushes its inner patterns.
+//
+// **A grammar's includes are cyclic** — an expression includes a parenthesised expression, which
+// includes an expression — so a key met again while it is still being resolved cannot wait for its
+// own answer. Resolution therefore runs to a fixed point: each pass hands a cycle the list the
+// previous pass reached for that key, the lists only ever grow, and the passes stop when no key's
+// list changed length, or after six. Real grammars settle in two or three.
+
+/** One resolved rule: a `match`, or the `begin` half of a `begin`/`end` pair carrying what the pair
+ * needs once it has started.
+ */
+private[highlighter] struct Rule
+    name: Option[string]
+    source: string
+    regex: Option[&Regex]
+    is_begin: bool
+    end_source: Option[string]
+    end_regex: Option[&Regex]
+
+    // The `end` names the `begin` match's groups (`\1`), so it is compiled per match, with their
+    // text in place of each reference.
+    end_refers: bool
+
+    end_captures: Option[Buf[Capture]]
+    captures: Option[Buf[Capture]]
+    inner_key: Option[string]
+    content_name: Option[string]
+    is_self: bool
+
+// The `$self` marker: never matched, and replaced by the top-level rules wherever a `begin` rule's
+// inner patterns are taken.
+private self_marker() -> Rule = Rule(None, "", None, false, None, None, false, None, None, None, None, true)
+
+private[highlighter] struct Resolved
+    top: Buf[Rule]
+    lists: Map[string, Buf[Rule]]
+    warnings: Buf[string]
+
+private[highlighter] resolve(g: Grammar) -> Resolved
+    var r = Resolver(g.repository, map(), map(), buf(), buf(), map(), g.ids)
+    var before: Map[string, usize] = map()
+    var passes = 0
+    var done = false
+
+    while !done && passes < 6
+        passes += 1
+        r.fallback = r.cache
+        r.cache = map()
+        r.cached("$top", g.patterns)
+
+        val after = sizes(r.cache)
+
+        done = same_sizes(after, before)
+        before = after
+
+    Resolved(r.cache.get("$top").unwrap(), r.cache, r.warnings)
+end resolve
+
+private sizes(m: Map[string, Buf[Rule]]) -> Map[string, usize]
+    var out: Map[string, usize] = map()
+
+    for (k, v) in m.walk()
+        out.put(k, v.len())
+
+    out
+
+private same_sizes(a: Map[string, usize], b: Map[string, usize]) -> bool
+    if a.len() != b.len() then return false
+
+    for (k, v) in a.walk()
+        if b.get(k) != Some(v) then return false
+
+    true
+
+// Whether a pattern refers to a group by number — `\` and a digit anywhere, which is the test
+// vscode-textmate makes.
+private[highlighter] has_back_references(p: string) -> bool
+    val b = p.bytes
+
+    for i in 0..<b.len
+        if b[i] == u8('\\') && i + 1 < b.len && is_digit(b[i + 1]) then return true
+
+    false
+
+private[highlighter] is_digit(c: u8) -> bool = c >= u8('0') && c <= u8('9')
+
+private struct Resolver
+    repo: Map[string, Pattern]
+    cache: Map[string, Buf[Rule]]
+    fallback: Map[string, Buf[Rule]]
+    warnings: Buf[string]
+
+    // The keys being resolved right now, outermost first: meeting one of these again is a cycle.
+    visiting: Buf[string]
+
+    compiled: Map[string, Option[&Regex]]
+    next_id: usize
+
+    // A pattern compiled once per source text, across every pass. One that does not compile is
+    // reported in the warnings, once, and the rule holding it is dropped.
+    regex(*self, src: string) -> Option[&Regex]
+        self.compiled.get(src) match
+            Some(r) -> return r
+            None -> ()
+
+        val r = compile(src) match
+            Ok(re) -> Some(re)
+            Err(e) ->
+                self.warnings.push(s"regex compile failed: ${src} — ${describe(e)}")
+                None
+
+        self.compiled.put(src, r)
+        r
+    end regex
+
+    is_visiting(self, key: string) -> bool
+        for k in self.visiting.view()
+            if k == key then return true
+
+        false
+
+    cached(*self, key: string, patterns: Buf[Pattern]) -> Buf[Rule]
+        self.cache.get(key) match
+            Some(rules) -> return rules
+            None -> ()
+
+        self.visiting.push(key)
+
+        val rules = self.all(patterns)
+
+        self.visiting.pop()
+        self.cache.put(key, rules)
+        rules
+    end cached
+
+    all(*self, patterns: Buf[Pattern]) -> Buf[Rule]
+        var out: Buf[Rule] = buf()
+
+        for p in patterns.view()
+            for r in self.one(p).view()
+                out.push(r)
+
+        out
+
+    one(*self, p: Pattern) -> Buf[Rule]
+        var out: Buf[Rule] = buf()
+
+        p.include match
+            Some(inc) ->
+                if inc == "$self"
+                    out.push(self_marker())
+                    return out
+
+                if !inc.starts_with("#") then return out
+
+                return self.included(inc[1..])
+            None -> ()
+
+        p.match_rx match
+            Some(src) ->
+                self.regex(src) match
+                    Some(re) -> out.push(Rule(p.name, src, Some(re), false, None, None, false, None, p.captures, None, None, false))
+                    None -> ()
+
+                return out
+            None -> ()
+
+        p.begin match
+            Some(src) ->
+                self.regex(src) match
+                    Some(re) -> out.push(self.begin_rule(p, src, re))
+                    None -> ()
+
+                return out
+            None -> ()
+
+        p.patterns match
+            Some(ps) -> self.all(ps)
+            None -> out
+    end one
+
+    included(*self, key: string) -> Buf[Rule]
+        if self.is_visiting(key) then return self.fallback.get(key).unwrap_or(buf())
+
+        self.cache.get(key) match
+            Some(rules) -> return rules
+            None -> ()
+
+        val entry = self.repo.get(key) match
+            Some(e) -> e
+            None -> return buf()
+
+        // A repository entry is taken afresh each time it is resolved, with an identity of its own.
+        val p = Pattern(self.fresh(), entry.name, entry.match_rx, entry.begin, entry.end, entry.captures, entry.begin_captures, entry.end_captures, entry.patterns, entry.include, entry.content_name)
+
+        self.visiting.push(key)
+
+        val rules = self.one(p)
+
+        self.visiting.pop()
+        self.cache.put(key, rules)
+        rules
+    end included
+
+    begin_rule(*self, p: Pattern, src: string, re: &Regex) -> Rule
+        val inner = s"\u{0}inner_${p.id}"
+
+        if p.patterns.is_some() then self.cached(inner, p.patterns.unwrap())
+
+        var end_regex: Option[&Regex] = None
+        var refers = false
+
+        p.end match
+            Some(e) ->
+                if has_back_references(e) then refers = true else end_regex = self.regex(e)
+            None -> ()
+
+        val captures = if p.begin_captures.is_some() then p.begin_captures else p.captures
+
+        Rule(p.name, src, Some(re), true, p.end, end_regex, refers, p.end_captures, captures, Some(inner), p.content_name, false)
+    end begin_rule
+
+    fresh(*self) -> usize
+        val id = self.next_id
+
+        self.next_id += 1
+        id
+end Resolver

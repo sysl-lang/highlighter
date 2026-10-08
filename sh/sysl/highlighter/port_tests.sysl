@@ -1,0 +1,261 @@
+module sh.sysl.highlighter
+@tests
+
+import sh.sysl.markdown.{commonmark_html, parse, to_html_with}
+import sysl.buf.Buf
+import sysl.text.{Search, str_builder}
+
+// What this port adds to the Scala suite: the tests the Scala fixes were shipped without, the
+// dialect decisions, the `end` back-references, character boundaries, the error paths, and the
+// Markdown composition.
+
+private hl(json: string) -> Highlighter = from_json(json, Classes("hl-")).expect("the grammar loads")
+
+private keyword_grammar() -> string = raw"""
+    {
+      "scopeName": "source.kw",
+      "patterns": [
+        { "match": "\\b(if|else|real)\\b", "name": "keyword.control.kw" },
+        { "match": "\\w+", "name": "variable.other.kw" }
+      ]
+    }
+    """
+
+// --- \b is Unicode: a keyword inside a word is not a keyword ---
+
+@test("\\b: 'if' at the end of 'síif' is not a keyword")
+boundary_inside_word_if()
+    val out = hl(keyword_grammar()).highlight("síif")
+
+    assert(!out.contains("hl-keyword"), out)
+    assert_eq(out, "<span class=\"hl-variable\">síif</span>")
+
+@test("\\b: 'real' at the start of 'realíssimo' is not a keyword")
+boundary_inside_word_real()
+    val out = hl(keyword_grammar()).highlight("realíssimo")
+
+    assert(!out.contains("hl-keyword"), out)
+    assert_eq(out, "<span class=\"hl-variable\">realíssimo</span>")
+
+@test("\\b: a keyword standing alone beside a non-ASCII word still is one")
+boundary_beside_word()
+    assert_eq(hl(keyword_grammar()).highlight("if síif"), "<span class=\"hl-keyword\">if</span> <span class=\"hl-variable\">síif</span>")
+
+@test("\\b in a real grammar: Scala's 'if' inside 'síif' is not coloured")
+boundary_scala_grammar()
+    assert(!load("scala").highlight("val síif = 1").contains("<span class=\"hl-keyword\">if</span>"))
+
+// The Scala port's engine read `\w` as ASCII; C Oniguruma under vscode-oniguruma's dialect reads it
+// as Unicode, which is what every grammar is tested against in VS Code. One `\w+` takes the whole
+// word, accents and all.
+@test("\\w is Unicode, as in VS Code: one \\w+ takes 'naïve' whole")
+word_is_unicode()
+    assert_eq(hl(keyword_grammar()).highlight("naïve"), "<span class=\"hl-variable\">naïve</span>")
+
+// --- an `end` naming its `begin`'s groups ---
+
+private heredoc() -> string = raw"""
+    {
+      "scopeName": "source.doc",
+      "patterns": [
+        { "begin": "<<(\\w+)", "end": "^\\1$", "name": "string.unquoted.heredoc.doc",
+          "beginCaptures": { "1": { "name": "keyword.control.heredoc-token.doc" } },
+          "endCaptures": { "0": { "name": "keyword.control.heredoc-token.doc" } } },
+        { "match": "\\b(echo)\\b", "name": "support.function.doc" }
+      ]
+    }
+    """
+
+@test("an end naming its begin's group closes on that group's text")
+back_reference_closes()
+    val out = hl(heredoc()).highlight("cat <<EOF\necho inside\nEOF\necho after")
+    val lines = out.bytes.len
+
+    assert(lines > 0)
+    assert(out.contains("<span class=\"hl-string\">echo inside</span>"), out)
+    assert(out.contains("<span class=\"hl-function\">echo</span> after"), out)
+
+@test("an end naming its begin's group does not close on other text")
+back_reference_stays_open()
+    val out = hl(heredoc()).highlight("cat <<EOF\nEND\necho still")
+
+    assert(out.contains("<span class=\"hl-string\">echo still</span>"), out)
+
+@test("two pairs open at once each close on their own text")
+back_reference_per_match()
+    val h = hl(heredoc())
+
+    assert(h.highlight("<<A\nB\nA\necho x").contains("<span class=\"hl-function\">echo</span>"))
+    assert(h.highlight("<<B\nA\nB\necho x").contains("<span class=\"hl-function\">echo</span>"))
+
+@test("a begin group's text is escaped before it stands in an end")
+back_reference_escaped()
+    val g = raw"""
+        {
+          "scopeName": "source.esc",
+          "patterns": [
+            { "begin": "\\[(\\S+)\\[", "end": "\\]\\1\\]", "name": "string.quoted.esc" }
+          ]
+        }
+        """
+    val h = hl(g)
+
+    // `a.b` must close on `a.b` and not on `axb`, which an unescaped `.` would take.
+    assert_eq(h.highlight("[a.b[ x ]axb] y ]a.b] z"), "<span class=\"hl-string\">[a.b[ x ]axb] y ]a.b]</span> z")
+
+@test("a group that took no part stands in an end as nothing")
+back_reference_absent_group()
+    val g = raw"""
+        {
+          "scopeName": "source.opt",
+          "patterns": [
+            { "begin": "<(x)?", "end": ">\\1", "name": "string.quoted.opt" }
+          ]
+        }
+        """
+
+    assert_eq(hl(g).highlight("<a> b"), "<span class=\"hl-string\">&lt;a&gt;</span> b")
+
+@test("vscode-textmate's own rule: every backslash-digit is a reference")
+back_reference_test_is_vscodes()
+    assert(has_back_references("^\\1$"))
+    assert(has_back_references("\\\\1"))
+    assert(!has_back_references("\\d+\\b"))
+
+// Python's string rules close on `(\2)`, the quote their `begin` took — so without the reference
+// resolved, a string never closes and the rest of the file is string.
+@test("python: a string closes on the quote it opened with, and the code after it is code")
+python_string_closes()
+    val out = load("python").highlight("x = \"a\" if y else 'b'")
+
+    assert(out.contains("<span class=\"hl-keyword\">if</span>"), out)
+    assert(out.contains("<span class=\"hl-keyword\">else</span>"), out)
+
+// --- character boundaries ---
+
+@test("a zero-length match takes one whole character, not one byte")
+zero_length_takes_a_character()
+    val g = raw"""
+        {
+          "scopeName": "source.zw",
+          "patterns": [ { "match": "(?=é)", "name": "meta.zw" } ]
+        }
+        """
+
+    assert_eq(hl(g).highlight("aéé"), "aéé")
+
+@test("a zero-length match at the end of a line ends the line")
+zero_length_at_line_end()
+    val g = raw"""
+        {
+          "scopeName": "source.eol",
+          "patterns": [ { "match": "$", "name": "meta.eol" } ]
+        }
+        """
+
+    assert_eq(hl(g).highlight("abc\ndef"), "abc\ndef")
+
+@test("tokens over non-ASCII text concatenate back to each line")
+tokens_round_trip_utf8()
+    val code = "val café = \"naïve\" // 日本語\nval x = 1"
+    val lines = load("scala").tokens(code)
+
+    assert_eq(lines.len(), 2)
+    assert_eq(joined(lines[0]), "val café = \"naïve\" // 日本語")
+    assert_eq(joined(lines[1]), "val x = 1")
+
+private joined(line: Buf[Token]) -> string
+    var out = str_builder()
+
+    for t in line.view()
+        out.push(t.text)
+
+    out.finish()
+
+// --- what does not load ---
+
+@test("text that is not JSON is refused, with the reader's diagnostic")
+refuses_non_json()
+    assert(from_json("{ \"scopeName\": ").is_err())
+
+@test("a grammar with no scopeName is refused")
+refuses_no_scope()
+    assert_eq(from_json("{ \"patterns\": [] }").unwrap_err(), "the grammar has no 'scopeName'")
+
+@test("a rule key holding the wrong kind of value is refused, naming it")
+refuses_wrong_type()
+    assert_eq(from_json("{ \"scopeName\": \"s\", \"patterns\": [ { \"match\": 3 } ] }").unwrap_err(), "'match' is not a string")
+
+@test("a JSON value that is not an object is refused")
+refuses_array()
+    assert(from_json("[]").is_err())
+
+@test("an include of a repository entry that does not exist resolves to nothing")
+missing_include()
+    assert_eq(hl("{ \"scopeName\": \"s\", \"patterns\": [ { \"include\": \"#nowhere\" } ] }").highlight("x"), "x")
+
+// --- the renderer ---
+
+@test("inline rendering writes the theme's colour for each category")
+inline_colours()
+    val g = "{ \"scopeName\": \"s\", \"patterns\": [ { \"match\": \"\\\\d+\", \"name\": \"constant.numeric.s\" } ] }"
+    val h = from_json(g, Inline(monokai())).expect("loads")
+
+    assert_eq(h.highlight("a 42"), "a <span style=\"color:#ae81ff\">42</span>")
+
+@test("category: every row of the table")
+categories()
+    assert_eq(category("keyword.control.x"), "keyword")
+    assert_eq(category("storage.type.x"), "keyword")
+    assert_eq(category("string.quoted.x"), "string")
+    assert_eq(category("comment.line.x"), "comment")
+    assert_eq(category("constant.numeric.x"), "number")
+    assert_eq(category("constant.language.x"), "variable")
+    assert_eq(category("entity.name.type.x"), "type")
+    assert_eq(category("entity.name.function.x"), "function")
+    assert_eq(category("entity.other.attribute-name.x"), "function")
+    assert_eq(category("variable.other.x"), "variable")
+    assert_eq(category("support.type.x"), "type")
+    assert_eq(category("support.function.x"), "function")
+    assert_eq(category("support.other.x"), "")
+    assert_eq(category("punctuation.x"), "punctuation")
+    assert_eq(category("meta.block.x"), "")
+    assert_eq(category("source.x"), "")
+    assert_eq(category(""), "")
+
+@test("escape_html escapes the four and nothing else")
+escaping()
+    assert_eq(escape_html("a<b>&\"c'"), "a&lt;b&gt;&amp;&quot;c'")
+    assert_eq(escape_html("plain"), "plain")
+
+// --- Markdown ---
+
+private langs() -> Languages
+    val l = languages()
+
+    l.add("scala", load("scala"))
+    l
+
+@test("languages: a block naming a language added is highlighted inside pre and code")
+languages_code_block()
+    assert_eq(langs().code_block("scala", "val x = 1\n").unwrap(), "<pre><code class=\"language-scala\"><span class=\"hl-keyword\">val</span> x <span class=\"hl-keyword\">=</span> <span class=\"hl-number\">1</span>\n</code></pre>")
+
+@test("languages: the first word names the language, and a language- prefix is taken off")
+languages_first_word()
+    assert(langs().code_block("scala title=x", "1").is_some())
+    assert(langs().code_block("language-scala", "1").is_some())
+
+@test("languages: a block naming no language, or one not added, is declined")
+languages_decline()
+    assert(langs().code_block("", "x").is_none())
+    assert(langs().code_block("cobol", "x").is_none())
+
+@test("markdown: the hook highlights a fenced block and leaves the others as they were")
+markdown_composition()
+    var opts = commonmark_html()
+
+    opts.highlight = Some(langs().hook())
+
+    val out = to_html_with(parse("Some code:\n\n```scala\nval x = 1\n```\n\n```text\na < b\n```\n"), opts)
+
+    assert_eq(out, "<p>Some code:</p>\n<pre><code class=\"language-scala\"><span class=\"hl-keyword\">val</span> x <span class=\"hl-keyword\">=</span> <span class=\"hl-number\">1</span>\n</code></pre>\n<pre><code class=\"language-text\">a &lt; b\n</code></pre>\n")

@@ -1,0 +1,71 @@
+module sh.sysl.highlighter
+
+import sysl.container.{Map, map}
+import sysl.text.{Search, str_builder}
+
+/** Highlighters by language name — what a page renderer consults for a code block whose info string
+ * names a language.
+ *
+ * **This is the half of a Markdown composition that needs no Markdown**: `code_block` takes an info
+ * string and the block's text and answers the whole `<pre><code>…</code></pre>`, which is exactly the
+ * shape `sh.sysl.markdown`'s `HtmlOptions.highlight` hook asks for. A program rendering Markdown
+ * names both packages and passes `Some(langs.hook())`; this package does not depend on Markdown.
+ *
+ * A `Languages` shares its table on assignment, like the `Map` it holds, so a copy that is added to
+ * is the same set of languages.
+ */
+struct Languages
+    private table: Map[string, Highlighter]
+
+    /** `h` answers for code blocks whose info string's first word is `name`. A later `add` of the same
+     * name replaces the earlier one.
+     */
+    add(self, name: string, h: Highlighter)
+        self.table.put(name, h)
+
+    /** The highlighter for a language name, if one was added. */
+    get(self, name: string) -> Option[Highlighter] = self.table.get(name)
+
+    /** A code block as HTML, where its language is one of these: the info string's first word names
+     * the language — `language-` taken off the front if it is written that way — and the answer is
+     * `<pre><code class="language-NAME">` around the highlighted text. `None` for a block naming no
+     * language, or one not added, so the renderer writes the block as it would anyway.
+     */
+    code_block(self, info: string, code: string) -> Option[string]
+        val word = language_of(info)
+
+        if word.len == 0 then return None
+
+        val h = self.table.get(word) match
+            Some(h) -> h
+            None -> return None
+
+        var out = str_builder()
+
+        out.push("<pre><code class=\"language-")
+        out.push(escape_html(word))
+        out.push("\">")
+        out.push(h.highlight(code))
+        out.push("</code></pre>")
+        Some(out.finish())
+    end code_block
+
+    /** `code_block` as a closure, the type `HtmlOptions.highlight` holds. */
+    hook(self) -> &Fn(string, string) -> Option[string] = (info, code) -> self.code_block(info, code)
+end Languages
+
+/** An empty set of languages. */
+languages() -> Languages = Languages(map())
+
+// The first word of an info string, with a `language-` prefix taken off.
+private language_of(info: string) -> string
+    val b = info.bytes
+    var i: usize = 0
+
+    while i < b.len && b[i] != u8(' ') && b[i] != u8('\t')
+        i += 1
+
+    val word = info[0..<i]
+
+    if word.starts_with("language-") then word[9..] else word
+end language_of

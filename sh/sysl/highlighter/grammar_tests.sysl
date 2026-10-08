@@ -1,0 +1,579 @@
+module sh.sysl.highlighter
+@tests
+
+import sysl.fs.read_bytes
+import sysl.text.{Search, from_utf8, join, replace_all}
+
+// The Scala highlighter's `RealWorldGrammarTests`, test for test: VS Code's own TextMate grammars,
+// carried in `test-grammars/`, and the constructs somebody writing a page of that language types.
+// An assertion names the category a token must render as and, where it matters which token, the
+// exact text inside the span.
+
+private grammar_file(name: string) -> string
+    val here = __FILE__
+    val cut = here.last_index_of("/sh/sysl/highlighter/").expect("this file sits under sh/sysl/highlighter")
+
+    s"${here[0..<cut]}/test-grammars/${name}.tmLanguage.json"
+
+private[highlighter] grammar_text(name: string) -> string = from_utf8(read_bytes(grammar_file(name)).expect(s"${name} reads")).expect(s"${name} is UTF-8")
+
+private[highlighter] load(name: string) -> Highlighter
+    from_json(grammar_text(name), Classes("hl-")) match
+        Ok(h) -> h
+        Err(e) -> panic(s"failed to load ${name}: ${e}")
+
+private hi(name: string, code: string) -> string = load(name).highlight(code)
+
+// The rendered text with every span taken out and the escaping undone: the source, if nothing was
+// added or dropped.
+private source_of_html(html: string) -> string = replace_all(replace_all(replace_all(replace_all(without_spans(html), "&lt;", "<"), "&gt;", ">"), "&quot;", "\""), "&amp;", "&")
+
+// Some span carries the category.
+private shows(out: string, klass: string)
+    assert(out.contains(s"class=\"hl-${klass}\""), s"no hl-${klass} span in: ${out}")
+
+// A span of the category holds exactly `text`.
+private shows_on(out: string, klass: string, text: string)
+    val span = s"<span class=\"hl-${klass}\">${text}</span>"
+
+    assert(out.contains(span), s"no ${span} in: ${out}")
+
+// --- loading ---
+
+// Each grammar loads, and — stronger than the Scala suite asked — not one of its patterns is
+// refused: every `end` naming its `begin`'s groups is compiled per match, not at load.
+private loads_clean(name: string)
+    val h = load(name)
+
+    assert(h.load_warnings().len() == 0, s"${name}: ${join(h.load_warnings().view(), "; ")}")
+
+@test("grammar loading: javascript")
+load_javascript() = loads_clean("javascript")
+
+@test("grammar loading: typescript")
+load_typescript() = loads_clean("typescript")
+
+@test("grammar loading: tsx")
+load_tsx() = loads_clean("tsx")
+
+@test("grammar loading: bash")
+load_bash() = loads_clean("bash")
+
+@test("grammar loading: python")
+load_python() = loads_clean("python")
+
+@test("grammar loading: json")
+load_json() = loads_clean("json")
+
+@test("grammar loading: yaml")
+load_yaml() = loads_clean("yaml")
+
+@test("grammar loading: html")
+load_html() = loads_clean("html")
+
+@test("grammar loading: css")
+load_css() = loads_clean("css")
+
+@test("grammar loading: go")
+load_go() = loads_clean("go")
+
+@test("grammar loading: rust")
+load_rust() = loads_clean("rust")
+
+@test("grammar loading: scala")
+load_scala() = loads_clean("scala")
+
+@test("grammar loading: xml")
+load_xml() = loads_clean("xml")
+
+// --- javascript ---
+
+@test("javascript: single-line comment")
+js_line_comment()
+    shows(hi("javascript", "// hello"), "comment")
+
+@test("javascript: block comment")
+js_block_comment()
+    shows(hi("javascript", "/* hello */"), "comment")
+
+@test("javascript: import keyword")
+js_import()
+    shows_on(hi("javascript", "import x from \"y\""), "keyword", "import")
+
+@test("javascript: double-quoted string")
+js_double_string()
+    shows_on(hi("javascript", "\"hello\""), "string", "hello")
+
+@test("javascript: single-quoted string")
+js_single_string()
+    shows_on(hi("javascript", "'hello'"), "string", "hello")
+
+@test("javascript: template literal")
+js_template()
+    shows(hi("javascript", "`hi ${x}`"), "string")
+
+@test("javascript: const declaration")
+js_const()
+    shows_on(hi("javascript", "const x = 1"), "keyword", "const")
+
+@test("javascript: let declaration")
+js_let()
+    shows_on(hi("javascript", "let x = 1"), "keyword", "let")
+
+@test("javascript: var declaration")
+js_var()
+    shows_on(hi("javascript", "var x = 1"), "keyword", "var")
+
+@test("javascript: numeric literal")
+js_number()
+    shows_on(hi("javascript", "const x = 42"), "number", "42")
+
+@test("javascript: true / false / null literals")
+js_literals()
+    shows_on(hi("javascript", "const a = true; const b = false; const c = null;"), "variable", "true")
+
+@test("javascript: function keyword")
+js_function()
+    shows_on(hi("javascript", "function f() {}"), "keyword", "function")
+
+@test("javascript: arrow function")
+js_arrow()
+    shows_on(hi("javascript", "const f = () => 1"), "keyword", "const")
+
+@test("javascript: regex literal")
+js_regex()
+    shows(hi("javascript", "const r = /^foo$/g"), "string")
+
+@test("javascript: class keyword")
+js_class()
+    shows_on(hi("javascript", "class Foo {}"), "keyword", "class")
+
+// --- typescript ---
+
+@test("typescript: comment works")
+ts_comment()
+    shows(hi("typescript", "// hello"), "comment")
+
+@test("typescript: import keyword")
+ts_import()
+    shows_on(hi("typescript", "import x from \"y\""), "keyword", "import")
+
+@test("typescript: interface keyword")
+ts_interface()
+    shows_on(hi("typescript", "interface Foo {}"), "keyword", "interface")
+
+@test("typescript: type keyword")
+ts_type()
+    shows_on(hi("typescript", "type T = string"), "keyword", "type")
+
+@test("typescript: type annotation `: string`")
+ts_annotation()
+    shows(hi("typescript", "const x: string = 'a'"), "type")
+
+@test("typescript: generic")
+ts_generic()
+    shows(hi("typescript", "function f<T>(x: T): T { return x }"), "keyword")
+
+@test("typescript: enum keyword")
+ts_enum()
+    shows_on(hi("typescript", "enum Color { Red, Green }"), "keyword", "enum")
+
+// --- bash ---
+
+@test("bash: comment")
+bash_comment()
+    shows(hi("bash", "# hello"), "comment")
+
+@test("bash: double-quoted string")
+bash_double_string()
+    shows(hi("bash", "x=\"hello\""), "string")
+
+@test("bash: single-quoted string")
+bash_single_string()
+    shows(hi("bash", "x='hello'"), "string")
+
+// A zero-length `begin` whose pair has a zero-length `end` once held the tokenizer at one position
+// for ever on exactly these two lines.
+@test("bash: variable expansion inside string")
+bash_expansion()
+    shows(hi("bash", "echo \"$HOME\""), "variable")
+
+@test("bash: if keyword")
+bash_if()
+    shows_on(hi("bash", "if true; then echo y; fi"), "keyword", "if")
+
+@test("bash: for keyword")
+bash_for()
+    shows_on(hi("bash", "for i in 1 2 3; do echo $i; done"), "keyword", "for")
+
+// --- python ---
+
+@test("python: comment")
+py_comment()
+    shows(hi("python", "# hello"), "comment")
+
+@test("python: def keyword")
+py_def()
+    shows_on(hi("python", "def f():\n    pass"), "keyword", "def")
+
+@test("python: class keyword")
+py_class()
+    shows_on(hi("python", "class C: pass"), "keyword", "class")
+
+@test("python: string literal")
+py_string()
+    shows(hi("python", "x = \"hello\""), "string")
+
+@test("python: f-string")
+py_fstring()
+    shows(hi("python", "x = f\"hello {name}\""), "string")
+
+@test("python: number")
+py_number()
+    shows_on(hi("python", "x = 42"), "number", "42")
+
+@test("python: True/False/None")
+py_constants()
+    shows_on(hi("python", "x = True"), "variable", "True")
+
+@test("python: import statement")
+py_import()
+    shows_on(hi("python", "import os"), "keyword", "import")
+
+@test("python: decorator")
+py_decorator()
+    shows(hi("python", "@decorator"), "function")
+
+// --- json ---
+
+@test("json: string value")
+json_string()
+    shows(hi("json", "\"hello\""), "string")
+
+@test("json: number")
+json_number()
+    shows_on(hi("json", "42"), "number", "42")
+
+@test("json: true/false/null")
+json_constants()
+    shows_on(hi("json", "true"), "variable", "true")
+
+@test("json: object key + value")
+json_object()
+    shows(hi("json", "{\"k\": \"v\"}"), "string")
+
+// --- yaml ---
+
+@test("yaml: comment")
+yaml_comment()
+    shows(hi("yaml", "# hello"), "comment")
+
+// The grammar has no one pattern wrapping a bare key; the `:` after it is
+// `punctuation.separator.key-value.mapping.yaml`, which is what is asserted.
+@test("yaml: key")
+yaml_key()
+    shows(hi("yaml", "key: value"), "punctuation")
+
+@test("yaml: string value")
+yaml_string()
+    shows(hi("yaml", "key: \"value\""), "string")
+
+@test("yaml: list item")
+yaml_list_item()
+    shows(hi("yaml", "- item"), "punctuation")
+
+@test("yaml: iso date — no spurious number inside `2024-03-12`")
+yaml_iso_date()
+    assert(!hi("yaml", "date: 2024-03-12").contains("<span class=\"hl-number\">-12</span>"))
+
+@test("yaml: negative integer at start of value highlights as number")
+yaml_negative()
+    shows_on(hi("yaml", "count: -12"), "number", "-12")
+
+// --- html ---
+
+// `html` in `<!DOCTYPE html>` is `entity.name.tag.doctype`, which renders as `function`.
+@test("html: doctype")
+html_doctype()
+    shows_on(hi("html", "<!DOCTYPE html>"), "function", "html")
+
+@test("html: comment")
+html_comment()
+    shows(hi("html", "<!-- hi -->"), "comment")
+
+@test("html: open tag")
+html_open_tag()
+    shows_on(hi("html", "<div>"), "function", "div")
+
+@test("html: attribute")
+html_attribute()
+    shows_on(hi("html", "<a href=\"x\"></a>"), "function", "href")
+
+@test("html: self-closing tag")
+html_self_closing()
+    shows_on(hi("html", "<img src=\"x\" />"), "function", "img")
+
+// --- css ---
+
+@test("css: comment")
+css_comment()
+    shows(hi("css", "/* hello */"), "comment")
+
+// `.foo` is `entity.other.attribute-name.class.css`; the `.` is punctuation.
+@test("css: class selector")
+css_class()
+    shows_on(hi("css", ".foo { color: red }"), "function", "foo")
+
+@test("css: property")
+css_property()
+    shows_on(hi("css", ".x { color: red }"), "type", "color")
+
+// `constant.other.color.rgb-value.hex.css` holds no `numeric`, so it is a `variable`.
+@test("css: color value")
+css_colour()
+    shows_on(hi("css", ".x { color: #ff0000 }"), "variable", "ff0000")
+
+@test("css: @media rule")
+css_media()
+    shows_on(hi("css", "@media (min-width: 600px) {}"), "keyword", "media")
+
+// --- go ---
+
+@test("go: comment")
+go_comment()
+    shows(hi("go", "// hello"), "comment")
+
+@test("go: package declaration")
+go_package()
+    shows_on(hi("go", "package main"), "keyword", "package")
+
+@test("go: func declaration")
+go_func()
+    shows_on(hi("go", "func main() {}"), "keyword", "func")
+
+@test("go: string literal")
+go_string()
+    shows(hi("go", "x := \"hello\""), "string")
+
+@test("go: type keyword")
+go_type()
+    shows_on(hi("go", "type Foo struct {}"), "keyword", "type")
+
+// --- rust ---
+
+@test("rust: comment")
+rust_comment()
+    shows(hi("rust", "// hello"), "comment")
+
+@test("rust: fn declaration")
+rust_fn()
+    shows_on(hi("rust", "fn main() {}"), "keyword", "fn")
+
+@test("rust: let binding")
+rust_let()
+    shows_on(hi("rust", "let x = 1;"), "keyword", "let")
+
+@test("rust: struct keyword")
+rust_struct()
+    shows_on(hi("rust", "struct Foo {}"), "keyword", "struct")
+
+@test("rust: string literal")
+rust_string()
+    shows(hi("rust", "let s = \"hi\";"), "string")
+
+@test("rust: macro invocation")
+rust_macro()
+    shows_on(hi("rust", "println!(\"hi\");"), "function", "println!")
+
+// --- scala ---
+
+@test("scala: single-line comment")
+scala_comment()
+    shows(hi("scala", "// hello"), "comment")
+
+@test("scala: def keyword")
+scala_def()
+    shows_on(hi("scala", "def f = 1"), "keyword", "def")
+
+@test("scala: val keyword")
+scala_val()
+    shows_on(hi("scala", "val x = 1"), "keyword", "val")
+
+@test("scala: if keyword")
+scala_if()
+    shows_on(hi("scala", "if (x) 1 else 2"), "keyword", "if")
+
+@test("scala: string literal")
+scala_string()
+    shows(hi("scala", "val s = \"hi\""), "string")
+
+@test("scala: numeric literal")
+scala_number()
+    shows_on(hi("scala", "val x = 42"), "number", "42")
+
+// --- xml: Atom's grammar nests stray `end` and `name` keys inside a `captures` object ---
+
+@test("xml: grammar loads with no compile warnings despite malformed captures block")
+xml_loads()
+    assert_eq(load("xml").load_warnings().len(), 0)
+
+@test("xml: open tag name highlights")
+xml_open_tag()
+    shows_on(hi("xml", "<link>"), "function", "link")
+
+@test("xml: attribute name highlights")
+xml_attribute()
+    shows_on(hi("xml", "<a href=\"x\"/>"), "function", "href")
+
+@test("xml: attribute string value highlights")
+xml_attribute_value()
+    shows_on(hi("xml", "<a href=\"x\"/>"), "string", "x")
+
+@test("xml: comment highlights")
+xml_comment()
+    shows(hi("xml", "<!-- hi -->"), "comment")
+
+@test("xml: multi-line tag with URL attribute (the podcast-docs repro)")
+xml_multiline_tag()
+    val out = hi("xml", "<link rel=\"enclosure\"\n      href=\"https://echochamber.example/audio/ep04.mp3\"/>")
+
+    shows_on(out, "function", "link")
+    shows_on(out, "string", "https://echochamber.example/audio/ep04.mp3")
+
+// The namespace patterns' `((:))` puts two groups over one colon; the colon is written once.
+@test("xml: namespaced tag does not duplicate the colon")
+xml_namespaced_tag()
+    assert_eq(source_of_html(hi("xml", "<atom:link href=\"x\"/>")), "<atom:link href=\"x\"/>")
+
+@test("xml: namespaced attribute does not duplicate the colon")
+xml_namespaced_attribute()
+    assert_eq(source_of_html(hi("xml", "<a xmlns:atom=\"x\"/>")), "<a xmlns:atom=\"x\"/>")
+
+// --- the regex surface: one grammar per feature ---
+
+private synth(pattern: string) -> Highlighter
+    val g = s"{ \"scopeName\": \"source.synth\", \"patterns\": [ { \"match\": ${json_string(pattern)}, \"name\": \"keyword.synth\" } ] }"
+
+    from_json(g, Classes("hl-")).expect(s"synth grammar loads: ${pattern}")
+
+private json_string(s: string) -> string = "\"" + replace_all(replace_all(s, "\\", "\\\\"), "\"", "\\\"") + "\""
+
+@test("regex: negative lookbehind")
+rx_negative_lookbehind()
+    shows_on(synth("(?<!\\.)\\bfoo\\b").highlight("foo"), "keyword", "foo")
+
+@test("regex: positive lookbehind")
+rx_positive_lookbehind()
+    shows_on(synth("(?<=\\$)\\w+").highlight("$x"), "keyword", "x")
+
+@test("regex: negative lookahead")
+rx_negative_lookahead()
+    shows_on(synth("\\bfoo\\b(?!\\.)").highlight("foo"), "keyword", "foo")
+
+@test("regex: POSIX class [:alnum:]")
+rx_alnum()
+    shows_on(synth("\\b[[:alnum:]]+\\b").highlight("hello"), "keyword", "hello")
+
+@test("regex: POSIX class [:alpha:]")
+rx_alpha()
+    shows_on(synth("\\b[[:alpha:]]+\\b").highlight("hello"), "keyword", "hello")
+
+@test("regex: POSIX class inside complex set [_$[:alnum:]]")
+rx_complex_set()
+    shows_on(synth("\\b[_$[:alnum:]]+\\b").highlight("a_b"), "keyword", "a_b")
+
+@test("regex: atomic group")
+rx_atomic()
+    shows_on(synth("(?>foo)").highlight("foo"), "keyword", "foo")
+
+@test("regex: possessive quantifier *+")
+rx_possessive()
+    shows_on(synth("f.*+").highlight("foo"), "keyword", "foo")
+
+@test("regex: end-of-line anchor mid-string")
+rx_end_of_line()
+    shows_on(synth("[^\\n]+$").highlight("hello"), "keyword", "hello")
+
+@test("regex: alternation")
+rx_alternation()
+    shows_on(synth("\\b(if|else|while)\\b").highlight("if"), "keyword", "if")
+
+@test("regex: captures + named scope")
+rx_captures()
+    val g = raw"""
+        {
+          "scopeName": "source.synth",
+          "patterns": [
+            { "match": "\\b(if)\\s+(\\w+)",
+              "captures": { "1": { "name": "keyword.control" }, "2": { "name": "variable.other" } } }
+          ]
+        }
+        """
+    val out = from_json(g, Classes("hl-")).expect("captures grammar loads").highlight("if x")
+
+    shows_on(out, "keyword", "if")
+    shows_on(out, "variable", "x")
+
+// --- loader hardening ---
+
+@test("loader: compile failures are exposed through load_warnings")
+loader_warnings()
+    val g = "{ \"scopeName\": \"source.bad\", \"patterns\": [ { \"match\": \"(unclosed\", \"name\": \"keyword.bad\" } ] }"
+    val h = from_json(g, Classes("hl-")).expect("a grammar with a bad pattern still loads")
+
+    assert(h.load_warnings().len() > 0)
+    assert(join(h.load_warnings().view(), " ").contains("(unclosed"))
+
+@test("loader: the engine accepts (?#comment) inline-comment groups")
+loader_comment_group()
+    val h = from_json("{ \"scopeName\": \"source.good\", \"patterns\": [ { \"match\": \"f(?#middle)oo\", \"name\": \"keyword.good\" } ] }", Classes("hl-")).expect("the grammar loads")
+
+    assert_eq(h.load_warnings().len(), 0)
+    shows_on(h.highlight("foo"), "keyword", "foo")
+
+@test("loader: the engine handles a literal { without breaking quantifiers")
+loader_literal_brace()
+    val g = raw"""
+        {
+          "scopeName": "source.good",
+          "patterns": [
+            { "match": "a{3}", "name": "keyword.good" },
+            { "match": "\\{x\\}", "name": "string.good" }
+          ]
+        }
+        """
+    val h = from_json(g, Classes("hl-")).expect("the grammar loads")
+
+    assert_eq(h.load_warnings().len(), 0)
+    shows_on(h.highlight("aaa"), "keyword", "aaa")
+    shows_on(h.highlight("{x}"), "string", "{x}")
+
+@test("loader: tolerates stray non-capture keys inside a captures object")
+loader_stray_keys()
+    val g = raw"""
+        {
+          "scopeName": "source.strays",
+          "patterns": [
+            {
+              "begin": "<!--",
+              "end": "-->",
+              "name": "comment.block.strays",
+              "captures": {
+                "0": { "name": "punctuation.definition.comment.strays" },
+                "end": "-->",
+                "name": "comment.block.strays"
+              }
+            }
+          ]
+        }
+        """
+    val h = from_json(g, Classes("hl-")).expect("a grammar with stray captures keys still loads")
+
+    assert_eq(h.load_warnings().len(), 0)
+    shows(h.highlight("<!-- hi -->"), "comment")
+
+@test("loader: load_warnings is empty when every pattern compiles")
+loader_no_warnings()
+    val h = from_json("{ \"scopeName\": \"source.good\", \"patterns\": [ { \"match\": \"\\\\bfoo\\\\b\", \"name\": \"keyword.good\" } ] }", Classes("hl-")).expect("the grammar loads")
+
+    assert_eq(h.load_warnings().len(), 0)

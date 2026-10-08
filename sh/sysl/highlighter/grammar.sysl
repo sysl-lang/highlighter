@@ -1,0 +1,192 @@
+module sh.sysl.highlighter
+
+import sh.sysl.json.{Json, parse}
+import sh.sysl.parsing.source_of
+import sysl.buf.{Buf, buf}
+import sysl.container.{Map, map}
+
+// A TextMate grammar, as the JSON a `.tmLanguage.json` file holds.
+//
+// **Only the keys the tokenizer acts on are read**, and every other key is ignored — a grammar from
+// VS Code carries `information_for_contributors`, `version`, `$schema` and the like. A key the
+// tokenizer acts on that holds the wrong kind of value refuses the grammar, naming the key.
+//
+// **A `captures` object is read leniently**: an entry whose value is not a capture object is skipped
+// rather than refusing the grammar. Atom's XML grammar nests stray `"end"` and `"name"` strings
+// inside a `captures` object, and VS Code ignores them the same way.
+
+/** One entry of a `captures`, `beginCaptures` or `endCaptures` object: the group it names, as the
+ * key was written, and the scope it gives that group's text.
+ */
+struct Capture
+    key: string
+    name: Option[string]
+
+/** One rule of a grammar — a `match`, a `begin`/`end` pair, an `include`, or a bare list of
+ * `patterns`. A repository entry has the same shape.
+ *
+ * `id` is the rule's identity, which a `begin` rule's inner patterns are filed under while the
+ * grammar is resolved.
+ */
+struct Pattern
+    id: usize
+    name: Option[string]
+    match_rx: Option[string]
+    begin: Option[string]
+    end: Option[string]
+    captures: Option[Buf[Capture]]
+    begin_captures: Option[Buf[Capture]]
+    end_captures: Option[Buf[Capture]]
+    patterns: Option[Buf[Pattern]]
+    include: Option[string]
+    content_name: Option[string]
+
+/** A whole grammar: the scope every token of the language carries first, its top-level rules, and
+ * the repository `#name` includes are resolved against.
+ */
+struct Grammar
+    scope_name: string
+    name: Option[string]
+    file_types: Option[Buf[string]]
+    patterns: Buf[Pattern]
+    repository: Map[string, Pattern]
+
+    // How many identities the decoder handed out, so that a resolver making fresh rules continues
+    // past them.
+    private[highlighter] ids: usize
+
+/** A grammar read from its JSON text, or why it is not one. */
+grammar_from_json(text: string) -> Result[Grammar, string]
+    val src = source_of("grammar.json", text)
+
+    val doc = parse(src) match
+        Ok(d) -> d
+        Err(d) -> return Err(d.render(src))
+
+    var dec = Decoder(0)
+
+    dec.grammar(doc)
+end grammar_from_json
+
+private struct Decoder
+    next: usize
+
+    fresh(*self) -> usize
+        val id = self.next
+
+        self.next += 1
+        id
+
+    grammar(*self, doc: Json) -> Result[Grammar, string]
+        if !doc.is_object() then return Err("a grammar is a JSON object")
+
+        val scope = doc.get("scopeName") match
+            Some(Json.Str(s)) -> s
+            Some(_) -> return Err("'scopeName' is not a string")
+            None -> return Err("the grammar has no 'scopeName'")
+
+        val name = opt_string(doc, "name")?
+        val file_types = self.strings(doc, "fileTypes")?
+
+        val patterns = self.pattern_list(doc, "patterns")? match
+            Some(ps) -> ps
+            None -> buf()
+
+        var repo: Map[string, Pattern] = map()
+
+        doc.get("repository") match
+            Some(Json.Obj(members)) ->
+                for m in members.view()
+                    repo.put(m.key, self.pattern(m.value, s"repository.${m.key}")?)
+            Some(Json.Null) -> ()
+            Some(_) -> return Err("'repository' is not an object")
+            None -> ()
+
+        Ok(Grammar(scope, name, file_types, patterns, repo, self.next))
+    end grammar
+
+    strings(*self, o: Json, key: string) -> Result[Option[Buf[string]], string]
+        o.get(key) match
+            Some(Json.Arr(items)) ->
+                var out: Buf[string] = buf()
+
+                for it in items.view()
+                    it match
+                        Json.Str(s) -> out.push(s)
+                        _ -> return Err(s"'${key}' holds something that is not a string")
+
+                Ok(Some(out))
+            Some(Json.Null) -> Ok(None)
+            Some(_) -> Err(s"'${key}' is not an array")
+            None -> Ok(None)
+    end strings
+
+    pattern_list(*self, o: Json, key: string) -> Result[Option[Buf[Pattern]], string]
+        o.get(key) match
+            Some(Json.Arr(items)) ->
+                var out: Buf[Pattern] = buf()
+
+                for it in items.view()
+                    out.push(self.pattern(it, key)?)
+
+                Ok(Some(out))
+            Some(Json.Null) -> Ok(None)
+            Some(_) -> Err(s"'${key}' is not an array")
+            None -> Ok(None)
+    end pattern_list
+
+    pattern(*self, o: Json, at: string) -> Result[Pattern, string]
+        if !o.is_object() then return Err(s"a rule in '${at}' is not an object")
+
+        val id = self.fresh()
+
+        Ok(Pattern(id, opt_string(o, "name")?, opt_string(o, "match")?, opt_string(o, "begin")?, opt_string(o, "end")?, self.captures(o, "captures")?, self.captures(o, "beginCaptures")?, self.captures(o, "endCaptures")?, self.pattern_list(o, "patterns")?, opt_string(o, "include")?, opt_string(o, "contentName")?))
+    end pattern
+
+    // The lenient half: an entry that is not a capture object — or is one holding a key of the wrong
+    // kind — is dropped, and its siblings are kept.
+    captures(*self, o: Json, key: string) -> Result[Option[Buf[Capture]], string]
+        o.get(key) match
+            Some(Json.Obj(members)) ->
+                var out: Buf[Capture] = buf()
+
+                for m in members.view()
+                    self.capture(m.value) match
+                        Some(name) -> put_capture(out, Capture(m.key, name))
+                        None -> ()
+
+                Ok(Some(out))
+            Some(Json.Null) -> Ok(None)
+            Some(_) -> Err(s"'${key}' is not an object")
+            None -> Ok(None)
+    end captures
+
+    // `Some(name)` for a capture object, `None` for anything that is not one.
+    capture(*self, v: Json) -> Option[Option[string]]
+        if !v.is_object() then return None
+
+        val name = opt_string(v, "name") match
+            Ok(n) -> n
+            Err(_) -> return None
+
+        self.pattern_list(v, "patterns") match
+            Ok(_) -> Some(name)
+            Err(_) -> None
+    end capture
+end Decoder
+
+// A key written twice keeps the later value, as an object read into a map does.
+private put_capture(out: Buf[Capture], c: Capture)
+    for i in 0..<out.len()
+        if out[i].key == c.key
+            out[i] = c
+            return
+
+    out.push(c)
+
+private opt_string(o: Json, key: string) -> Result[Option[string], string]
+    o.get(key) match
+        Some(Json.Str(s)) -> Ok(Some(s))
+        Some(Json.Null) -> Ok(None)
+        Some(_) -> Err(s"'${key}' is not a string")
+        None -> Ok(None)

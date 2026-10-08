@@ -1,0 +1,424 @@
+module sh.sysl.highlighter
+@tests
+
+import sysl.buf.Buf
+import sysl.text.{Search, str_builder}
+
+// The Scala highlighter's `Tests` suite, test for test: small grammars written inline, each
+// exercising one piece of the tokenizer or the renderer.
+
+private simple() -> string = raw"""
+    {
+      "scopeName": "source.test",
+      "patterns": [
+        { "match": "\\b(if|else|val|def)\\b", "name": "keyword.control.test" },
+        { "match": "\\b\\d+\\b", "name": "constant.numeric.test" },
+        { "begin": "\"", "end": "\"", "name": "string.quoted.double.test",
+          "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.test" }] },
+        { "match": "//.*$", "name": "comment.line.test" }
+      ]
+    }
+    """
+
+private hl(json: string) -> Highlighter = from_json(json).expect("the grammar loads")
+
+private hl_with(json: string, mode: RenderMode) -> Highlighter = from_json(json, mode).expect("the grammar loads")
+
+// The visible text of rendered HTML: every `<span …>` and `</span>` taken out, nothing unescaped.
+private[highlighter] without_spans(html: string) -> string
+    val b = html.bytes
+    var out = str_builder()
+    var lit: usize = 0
+    var i: usize = 0
+
+    while i < b.len
+        val open = html[i..].starts_with("<span")
+        val close = html[i..].starts_with("</span>")
+
+        if open || close
+            out.push(html[lit..<i])
+
+            while i < b.len && b[i] != u8('>')
+                i += 1
+
+            i += 1
+            lit = i
+        else
+            i += 1
+
+    out.push(html[lit..])
+    out.finish()
+end without_spans
+
+// --- tokenizer ---
+
+@test("keywords")
+keywords()
+    val out = hl(simple()).highlight("val x = 42")
+
+    assert(out.contains("keyword"))
+    assert(out.contains("number"))
+
+@test("strings")
+strings()
+    assert(hl(simple()).highlight("val s = \"hello\"").contains("string"))
+
+@test("comments")
+comments()
+    assert(hl(simple()).highlight("val x = 1 // note").contains("comment"))
+
+@test("multiline begin/end spans lines")
+multiline_begin_end()
+    assert(hl(simple()).highlight("\"hello\nworld\"").contains("string"))
+
+// --- render modes ---
+
+@test("class mode default prefix")
+class_mode_default_prefix()
+    assert(hl_with(simple(), Classes("hl-")).highlight("val x").contains("class=\"hl-keyword\""))
+
+@test("class mode custom prefix")
+class_mode_custom_prefix()
+    assert(hl_with(simple(), Classes("code-")).highlight("val x").contains("class=\"code-keyword\""))
+
+@test("inline mode OneDark")
+inline_one_dark()
+    assert(hl_with(simple(), Inline(one_dark())).highlight("val x").contains("style=\"color:#c678dd\""))
+
+@test("inline mode OneLight")
+inline_one_light()
+    assert(hl_with(simple(), Inline(one_light())).highlight("val x").contains("style=\"color:#a626a4\""))
+
+// --- structured tokens ---
+
+private line_text(line: Buf[Token]) -> string
+    var out = str_builder()
+
+    for t in line.view()
+        out.push(t.text)
+
+    out.finish()
+
+private find_token(line: Buf[Token], text: string) -> Token
+    for t in line.view()
+        if t.text == text then return t
+
+    panic(s"no token reads '${text}'")
+
+@test("tokens are grouped one list per source line and reproduce the line")
+tokens_per_line()
+    val lines = hl(simple()).tokens("val x = 1\n// note")
+
+    assert_eq(lines.len(), 2)
+    assert_eq(line_text(lines[0]), "val x = 1")
+    assert_eq(line_text(lines[1]), "// note")
+
+@test("each token carries a category a caller can map to its own palette")
+token_categories()
+    val h = hl(simple())
+    val toks = h.tokens("val x = 42")[0]
+
+    assert_eq(h.category_of(find_token(toks, "val")), "keyword")
+    assert_eq(h.category_of(find_token(toks, "42")), "number")
+    assert_eq(h.category("comment.line.test"), "comment")
+
+// --- html escaping ---
+
+@test("escapes angle brackets")
+escapes_angle_brackets()
+    assert(hl(simple()).highlight("val x = <tag>").contains("&lt;tag&gt;"))
+
+@test("escapes ampersands")
+escapes_ampersands()
+    assert(hl(simple()).highlight("val x = a & b").contains("&amp;"))
+
+// --- repository includes ---
+
+private with_repo() -> string = raw"""
+    {
+      "scopeName": "source.repo",
+      "patterns": [
+        { "include": "#keywords" },
+        { "include": "#literals" }
+      ],
+      "repository": {
+        "keywords": {
+          "patterns": [
+            { "match": "\\b(let|const|function|return)\\b", "name": "keyword.control.repo" }
+          ]
+        },
+        "literals": {
+          "patterns": [
+            { "include": "#numbers" },
+            { "include": "#strings" }
+          ]
+        },
+        "numbers": {
+          "match": "\\b\\d+\\b",
+          "name": "constant.numeric.repo"
+        },
+        "strings": {
+          "begin": "\"",
+          "end": "\"",
+          "name": "string.quoted.double.repo"
+        }
+      }
+    }
+    """
+
+@test("resolves top-level includes")
+top_level_includes()
+    val out = hl(with_repo()).highlight("let x = 42")
+
+    assert(out.contains("keyword"))
+    assert(out.contains("number"))
+
+@test("resolves nested includes (two levels deep)")
+nested_includes()
+    assert(hl(with_repo()).highlight("let s = \"hi\"").contains("string"))
+
+@test("resolves single-pattern repository entries")
+single_pattern_entries()
+    val out = hl(with_repo()).highlight("return 99")
+
+    assert(out.contains("keyword"))
+    assert(out.contains("number"))
+
+// --- begin/end with captures ---
+
+private with_captures() -> string = raw"""
+    {
+      "scopeName": "source.cap",
+      "patterns": [
+        {
+          "name": "meta.function.cap",
+          "begin": "(function)\\s+([a-zA-Z_]\\w*)",
+          "beginCaptures": {
+            "1": { "name": "storage.type.function.cap" },
+            "2": { "name": "entity.name.function.cap" }
+          },
+          "end": "\\}",
+          "patterns": [
+            { "match": "\\b(return)\\b", "name": "keyword.control.cap" },
+            { "match": "\\b\\d+\\b", "name": "constant.numeric.cap" }
+          ]
+        },
+        { "match": "\\b\\d+\\b", "name": "constant.numeric.cap" }
+      ]
+    }
+    """
+
+@test("emits capture group scopes")
+capture_scopes()
+    val out = hl_with(with_captures(), Classes("hl-")).highlight("function foo { return 1 }")
+
+    assert(out.contains("hl-keyword"))
+    assert(out.contains("hl-function"))
+
+@test("inner patterns work inside begin/end")
+inner_patterns()
+    assert(hl_with(with_captures(), Classes("hl-")).highlight("function foo { return 42 }").contains("hl-number"))
+
+// --- cycle detection ---
+
+@test("handles mutually recursive includes without stack overflow")
+mutual_recursion()
+    val g = raw"""
+        {
+          "scopeName": "source.cycle",
+          "patterns": [ { "include": "#a" } ],
+          "repository": {
+            "a": { "patterns": [ { "include": "#b" }, { "match": "\\b(hello)\\b", "name": "keyword.control.cycle" } ] },
+            "b": { "patterns": [ { "include": "#a" }, { "match": "\\b\\d+\\b", "name": "constant.numeric.cycle" } ] }
+          }
+        }
+        """
+
+    assert(hl(g).highlight("hello 42").contains("keyword"))
+
+// --- $self ---
+
+@test("re-applies grammar inside nested blocks")
+self_include()
+    val g = raw"""
+        {
+          "scopeName": "source.self",
+          "patterns": [
+            { "match": "\\b(if|else)\\b", "name": "keyword.control.self" },
+            { "begin": "\\{", "end": "\\}", "name": "meta.block.self", "patterns": [{ "include": "$self" }] },
+            { "match": "\\b\\d+\\b", "name": "constant.numeric.self" }
+          ]
+        }
+        """
+    val out = hl(g).highlight("if { 42 }")
+
+    assert(out.contains("keyword"))
+    assert(out.contains("number"))
+
+// --- token merging ---
+
+@test("merges adjacent tokens with same scope")
+merges_same_scope()
+    val out = hl_with(simple(), Classes("hl-")).highlight("\"hello\"")
+
+    assert(!out.contains("hl-string\">h</span><span class=\"hl-string"))
+
+// --- unknown fields ---
+
+@test("ignores extra top-level fields")
+ignores_extra_fields()
+    val g = raw"""
+        {
+          "scopeName": "source.extra",
+          "name": "Extra Test",
+          "version": "1.0.0",
+          "information_for_contributors": ["test"],
+          "patterns": [ { "match": "\\b(foo)\\b", "name": "keyword.control.extra" } ]
+        }
+        """
+
+    assert(from_json(g).is_ok())
+
+// --- nested capture groups ---
+
+// A group wrapping another (`((:))`) puts two groups over the same characters — the shape XML's
+// namespace patterns use for the `:`. That span is emitted once, the inner group's scope on top.
+private nested() -> string = raw"""
+    {
+      "scopeName": "source.nested",
+      "patterns": [
+        { "match": "([a-z]+)((:))([a-z]+)",
+          "captures": {
+            "1": { "name": "entity.name.tag.ns.nested" },
+            "2": { "name": "entity.name.tag.nested" },
+            "3": { "name": "punctuation.separator.nested" },
+            "4": { "name": "entity.name.tag.local.nested" }
+          }
+        }
+      ]
+    }
+    """
+
+@test("does not duplicate text covered by nested groups")
+nested_no_duplicate()
+    assert_eq(without_spans(hl_with(nested(), Classes("hl-")).highlight("foo:bar")), "foo:bar")
+
+@test("innermost nested group wins the scope")
+nested_innermost_wins()
+    assert(hl_with(nested(), Classes("hl-")).highlight("foo:bar").contains("<span class=\"hl-punctuation\">:</span>"))
+
+// --- edge cases ---
+
+@test("empty input")
+empty_input()
+    assert_eq(hl(simple()).highlight(""), "")
+
+@test("input with only whitespace")
+only_whitespace()
+    assert_eq(hl(simple()).highlight("   "), "   ")
+
+@test("no patterns match")
+no_patterns_match()
+    assert_eq(hl(simple()).highlight("xyz abc"), "xyz abc")
+
+@test("multiple keywords on one line")
+several_keywords()
+    assert_eq(hl_with(simple(), Classes("hl-")).highlight("if x else val").count_of("hl-keyword"), 3)
+
+@test("adjacent patterns with no gap")
+adjacent_patterns()
+    val out = hl_with(simple(), Classes("hl-")).highlight("42//comment")
+
+    assert(out.contains("hl-number"))
+    assert(out.contains("hl-comment"))
+
+@test("begin/end with no content")
+empty_begin_end()
+    assert(hl_with(simple(), Classes("hl-")).highlight("\"\"").contains("hl-string"))
+
+@test("unclosed begin/end spans to end of input")
+unclosed_begin_end()
+    assert(hl_with(simple(), Classes("hl-")).highlight("\"hello").contains("hl-string"))
+
+@test("special characters in unmatched text")
+special_characters()
+    val out = hl(simple()).highlight("<div>&</div>")
+
+    assert(out.contains("&lt;"))
+    assert(out.contains("&amp;"))
+    assert(out.contains("&gt;"))
+
+@test("multiline with blank lines")
+blank_lines()
+    assert_eq(hl_with(simple(), Classes("hl-")).highlight("val x\n\nval y").count_of("\n"), 2)
+
+@test("zero-length match does not loop")
+zero_length_match()
+    val g = raw"""
+        {
+          "scopeName": "source.zero",
+          "patterns": [
+            { "match": "(?=x)", "name": "meta.lookahead" },
+            { "match": ".", "name": "keyword.other" }
+          ]
+        }
+        """
+
+    assert(hl(g).highlight("xyz").len > 0)
+
+@test("POSIX character classes in patterns")
+posix_classes()
+    val g = raw"""
+        {
+          "scopeName": "source.posix",
+          "patterns": [
+            { "match": "[[:alpha:]]+", "name": "keyword.control.posix" },
+            { "match": "[[:digit:]]+", "name": "constant.numeric.posix" }
+          ]
+        }
+        """
+    val out = hl_with(g, Classes("hl-")).highlight("hello 42")
+
+    assert(out.contains("hl-keyword"))
+    assert(out.contains("hl-number"))
+
+@test("invalid regex in pattern is silently skipped")
+invalid_regex_skipped()
+    val g = raw"""
+        {
+          "scopeName": "source.badrx",
+          "patterns": [
+            { "match": "[invalid", "name": "keyword.bad" },
+            { "match": "\\b(good)\\b", "name": "keyword.control.good" }
+          ]
+        }
+        """
+
+    assert(hl_with(g, Classes("hl-")).highlight("good stuff").contains("hl-keyword"))
+
+@test("deeply nested $self does not stack overflow")
+deep_self()
+    val g = raw"""
+        {
+          "scopeName": "source.deep",
+          "patterns": [
+            { "match": "\\b(kw)\\b", "name": "keyword.control.deep" },
+            { "begin": "\\(", "end": "\\)", "name": "meta.parens.deep", "patterns": [{ "include": "$self" }] }
+          ]
+        }
+        """
+
+    assert(hl_with(g, Classes("hl-")).highlight("(kw (kw (kw)))").count_of("hl-keyword") >= 3)
+
+@test("contentName adds scope to inner content")
+content_name()
+    val g = raw"""
+        {
+          "scopeName": "source.cn",
+          "patterns": [
+            { "begin": "\\{", "end": "\\}", "name": "meta.block.cn", "contentName": "string.content.cn", "patterns": [] }
+          ]
+        }
+        """
+
+    assert(hl_with(g, Classes("hl-")).highlight("{ hello }").contains("hl-string"))

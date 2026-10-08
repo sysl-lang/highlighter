@@ -1,0 +1,494 @@
+module sh.sysl.highlighter
+
+import sh.sysl.oniguruma.{Match, Regex, Scanner, compile, describe, scanner}
+import sysl.buf.{Buf, buf}
+import sysl.container.{Map, map}
+import sysl.text.{StrBuilder, split, str_builder}
+
+// Cutting text into tokens, line by line, with a stack of the `begin`/`end` pairs still open
+// carried from one line to the next.
+//
+// **At each position the next thing to happen is whichever matches first**: the open pair's `end`,
+// or the earliest of the rules in force there, the lower-numbered rule winning a tie and the `end`
+// winning a tie with any rule. All the rules in force are searched as one Oniguruma regset, which
+// answers exactly that — the leftmost match and, at that position, the lowest index.
+//
+// **Every offset is a byte offset into the UTF-8 line**, which is what Oniguruma answers in.
+
+/** A piece of a line and the scopes it sits in, outermost first — the grammar's own scope, then one
+ * per enclosing rule. Its innermost scope is the last.
+ */
+struct Token
+    text: string
+    scopes: Buf[string]
+
+// One open `begin`/`end` pair, or the grammar itself at the bottom of the stack.
+private struct Frame
+    key: string
+    end: Option[&Regex]
+    end_captures: Option[Buf[Capture]]
+    scope_name: Option[string]
+    content_name: Option[string]
+
+// The rules in force under one key, as matched: every `$self` marker expanded, and searched as one
+// scanner. `sc` is `None` only where the set would not build, and then the rules are searched one by
+// one, which answers the same.
+private[highlighter] struct Scan
+    rules: Buf[Rule]
+    sc: Option[&Scanner]
+
+private[highlighter] struct Tokenizer
+    scope_name: string
+    top: Buf[Rule]
+    lists: Map[string, Buf[Rule]]
+    warnings: Buf[string]
+    scans: Map[string, Scan]
+    ends: Map[string, Option[&Regex]]
+
+    tokenize(self, text: string) -> Buf[Buf[Token]]
+        var out: Buf[Buf[Token]] = buf()
+        var stack: Buf[Frame] = buf()
+
+        stack.push(Frame("$top", None, None, Some(self.scope_name), None))
+
+        for line in split(text, "\n")
+            out.push(self.line(line, stack))
+
+        out
+    end tokenize
+
+    private scan_for(self, key: string) -> Scan
+        self.scans.get(key) match
+            Some(s) -> return s
+            None -> ()
+
+        var rules: Buf[Rule] = buf()
+
+        if key == "$top"
+            push_live(rules, self.top)
+        else
+            self.lists.get(key) match
+                Some(inner) ->
+                    for r in inner.view()
+                        if r.is_self then push_live(rules, self.top) else rules.push(r)
+                None -> ()
+
+        var sources: Buf[string] = buf()
+
+        for r in rules.view()
+            sources.push(r.source)
+
+        val sc = scanner(sources.view()) match
+            Ok(s) -> Some(s)
+            Err(_) -> None
+
+        val s = Scan(rules, sc)
+
+        self.scans.put(key, s)
+        s
+    end scan_for
+
+    // The `end` of a rule whose `end` names its `begin` match's groups: each `\N` replaced by the
+    // text group N took, escaped, as vscode-textmate does. Compiled once per distinct result.
+    private end_for(self, src: string, m: Match) -> Option[&Regex]
+        val resolved = resolve_back_references(src, m)
+
+        self.ends.get(resolved) match
+            Some(r) -> return r
+            None -> ()
+
+        val r = compile(resolved) match
+            Ok(re) -> Some(re)
+            Err(e) ->
+                self.warnings.push(s"regex compile failed: ${resolved} — ${describe(e)}")
+                None
+
+        self.ends.put(resolved, r)
+        r
+    end end_for
+
+    private line(self, line: string, stack: Buf[Frame]) -> Buf[Token]
+        var tokens: Buf[Token] = buf()
+        var pos: usize = 0
+
+        // Each (position, depth) this line has been at since it last moved. A zero-length `begin`
+        // whose pair has a zero-length `end` — bash's `command_statement` and `command_name_range` —
+        // pushes and pops at one position for ever; meeting a pair again means no progress was made,
+        // and one character is taken under the current scopes to make some.
+        var seen: Buf[(usize, usize)] = buf()
+
+        while pos < line.len
+            if contains_pair(seen, (pos, stack.len()))
+                val step = char_len(line, pos)
+
+                tokens.push(Token(line[pos..<pos + step], scopes_of(stack, stack.len())))
+                pos += step
+                seen.clear()
+                continue
+
+            seen.push((pos, stack.len()))
+
+            val before = pos
+            val frame = stack[stack.len() - 1]
+
+            val end_match = frame.end match
+                Some(er) -> search(er, line, pos)
+                None -> None
+
+            val best = next_rule(self.scan_for(frame.key), line, pos)
+
+            val use_end = end_match match
+                Some(em) -> best match
+                    Some((_, bm)) -> em.start() <= bm.start()
+                    None -> true
+                None -> false
+
+            if use_end
+                val em = end_match.unwrap()
+
+                if em.start() > pos then tokens.push(Token(line[pos..<em.start()], scopes_of(stack, stack.len())))
+
+                if em.end() > em.start() then emit(tokens, line, em, frame.end_captures, scopes_of(stack, stack.len() - 1), frame.scope_name)
+
+                pos = em.end()
+                stack.pop()
+            else
+                best match
+                    Some((rule, m)) -> pos = self.take(tokens, line, pos, stack, rule, m)
+                    None ->
+                        tokens.push(Token(line[pos..], scopes_of(stack, stack.len())))
+                        pos = line.len
+
+            if pos != before then seen.clear()
+
+        tokens
+    end line
+
+    // A rule matched at `m`: the text before it under the current scopes, then the match, and for a
+    // `begin` rule its pair pushed. Answers where the line continues.
+    private take(self, tokens: Buf[Token], line: string, pos: usize, stack: Buf[Frame], rule: Rule, m: Match) -> usize
+        if m.start() > pos then tokens.push(Token(line[pos..<m.start()], scopes_of(stack, stack.len())))
+
+        if !rule.is_begin
+            if m.end() == m.start()
+                // A zero-length match takes one character, so the line moves on.
+                if m.start() >= line.len then return line.len
+
+                val step = char_len(line, m.start())
+
+                tokens.push(Token(line[m.start()..<m.start() + step], scopes_of(stack, stack.len())))
+                return m.start() + step
+
+            emit(tokens, line, m, rule.captures, scopes_of(stack, stack.len()), rule.name)
+            return m.end()
+
+        emit(tokens, line, m, rule.captures, scopes_of(stack, stack.len()), rule.name)
+
+        val end = if rule.end_refers then self.end_for(rule.end_source.unwrap(), m) else rule.end_regex
+
+        stack.push(Frame(rule.inner_key.unwrap(), end, rule.end_captures, rule.name, rule.content_name))
+        m.end()
+    end take
+end Tokenizer
+
+private[highlighter] tokenizer(g: Grammar) -> Tokenizer
+    val r = resolve(g)
+
+    Tokenizer(g.scope_name, r.top, r.lists, r.warnings, map(), map())
+
+// Every rule of `rules` but the `$self` markers.
+private push_live(out: Buf[Rule], rules: Buf[Rule])
+    for r in rules.view()
+        if !r.is_self then out.push(r)
+
+private contains_pair(seen: Buf[(usize, usize)], k: (usize, usize)) -> bool
+    for p in seen.view()
+        if p.0 == k.0 && p.1 == k.1 then return true
+
+    false
+
+// The length in bytes of the character starting at `i`.
+private char_len(s: string, i: usize) -> usize
+    val b = s.bytes
+    var j = i + 1
+
+    while j < b.len && (b[j] & 192) == 128
+        j += 1
+
+    j - i
+
+// The scopes of the bottom `depth` frames, outermost first: each frame's own scope, then the scope
+// its content takes.
+private scopes_of(stack: Buf[Frame], depth: usize) -> Buf[string]
+    var out: Buf[string] = buf()
+
+    for i in 0..<depth
+        val f = stack[i]
+
+        f.scope_name match
+            Some(s) -> out.push(s)
+            None -> ()
+
+        f.content_name match
+            Some(s) -> out.push(s)
+            None -> ()
+
+    out
+end scopes_of
+
+private search(re: &Regex, line: string, pos: usize) -> Option[Match]
+    re.search(line, pos, pos) match
+        Ok(m) -> m
+        Err(_) -> None
+
+// The earliest match of any rule in force at or after `pos`, the lower index winning a tie.
+private next_rule(scan: Scan, line: string, pos: usize) -> Option[(Rule, Match)]
+    scan.sc match
+        Some(sc) ->
+            sc.find_next(line, pos, pos) match
+                Ok(Some(sm)) -> return Some((scan.rules[sm.index], sm.found))
+                Ok(None) -> return None
+                Err(_) -> ()
+        None -> ()
+
+    // One by one, which is what the set answers when it can build and search.
+    var best: Option[(Rule, Match)] = None
+
+    for r in scan.rules.view()
+        r.regex match
+            Some(re) ->
+                search(re, line, pos) match
+                    Some(m) ->
+                        val better = best match
+                            Some((_, bm)) -> m.start() < bm.start()
+                            None -> true
+
+                        if better then best = Some((r, m))
+                    None -> ()
+            None -> ()
+
+    best
+end next_rule
+
+// The tokens of one match: its text under the base scopes and the rule's name, with each named
+// capture group's text taking that group's scope as well.
+//
+// **Groups may nest and overlap** — XML's `((:))` puts two groups over one colon — so the scopes are
+// worked out per byte, every group covering a byte layered in group order, and each maximal run of
+// identical scopes is one token. Every byte is emitted exactly once.
+private emit(tokens: Buf[Token], line: string, m: Match, captures: Option[Buf[Capture]], base: Buf[string], name: Option[string])
+    val text = line[m.start()..<m.end()]
+
+    val caps = captures match
+        Some(cs) -> cs
+        None -> buf()
+
+    if caps.len() == 0
+        tokens.push(Token(text, with_names(base, name, None)))
+        return
+
+    val whole = with_names(base, name, group_zero(caps))
+    val len = m.end() - m.start()
+
+    // (group, from, to, scope) for every named group inside the match, relative to its start.
+    var covers: Buf[(usize, usize, usize, string)] = buf()
+
+    for c in caps.view()
+        group_number(c.key) match
+            Some(n) ->
+                if n > 0 && n < m.group_count()
+                    m.span(n) match
+                        Some((gs, ge)) ->
+                            if gs >= m.start() && ge <= m.end()
+                                c.name match
+                                    Some(scope) ->
+                                        val rs = min(gs - m.start(), len)
+                                        val re = min(ge - m.start(), len)
+
+                                        if re > rs then covers.push((n, rs, re, scope))
+                                    None -> ()
+                        None -> ()
+            None -> ()
+
+    if covers.len() == 0
+        tokens.push(Token(text, whole))
+        return
+
+    sort_by_group(covers)
+
+    // The places where the set of covering groups can change.
+    var cuts: Buf[usize] = buf()
+
+    cuts.push(0)
+    cuts.push(len)
+
+    for c in covers.view()
+        cuts.push(c.1)
+        cuts.push(c.2)
+
+    sort_usize(cuts)
+
+    var run_start: usize = 0
+    var run_scopes: Option[Buf[string]] = None
+
+    for k in 0..<cuts.len()
+        val at = cuts[k]
+
+        if at >= len then break
+        if k + 1 < cuts.len() && cuts[k + 1] == at then continue
+
+        val here = scopes_at(covers, at, base, name, whole)
+
+        run_scopes match
+            Some(prev) ->
+                if !same_scopes(prev, here)
+                    tokens.push(Token(text[run_start..<at], prev))
+                    run_start = at
+                    run_scopes = Some(here)
+            None -> run_scopes = Some(here)
+
+    tokens.push(Token(text[run_start..], run_scopes.unwrap()))
+end emit
+
+private group_zero(caps: Buf[Capture]) -> Option[string]
+    for c in caps.view()
+        if c.key == "0" then return c.name
+
+    None
+
+private scopes_at(covers: Buf[(usize, usize, usize, string)], i: usize, base: Buf[string], name: Option[string], whole: Buf[string]) -> Buf[string]
+    var names: Buf[string] = buf()
+
+    for c in covers.view()
+        if i >= c.1 && i < c.2 then names.push(c.3)
+
+    if names.len() == 0 then return whole
+
+    val out = with_names(base, name, None)
+
+    for n in names.view()
+        out.push(n)
+
+    out
+end scopes_at
+
+// A fresh list: `base`, then `a` and `b` where present.
+private with_names(base: Buf[string], a: Option[string], b: Option[string]) -> Buf[string]
+    var out: Buf[string] = buf()
+
+    for s in base.view()
+        out.push(s)
+
+    a match
+        Some(s) -> out.push(s)
+        None -> ()
+
+    b match
+        Some(s) -> out.push(s)
+        None -> ()
+
+    out
+end with_names
+
+private[highlighter] same_scopes(a: Buf[string], b: Buf[string]) -> bool
+    if a.len() != b.len() then return false
+
+    for i in 0..<a.len()
+        if a[i] != b[i] then return false
+
+    true
+
+// A capture key read as a group number: an optional sign and digits, as the key was written.
+private group_number(key: string) -> Option[usize]
+    val b = key.bytes
+    var i: usize = 0
+    var negative = false
+
+    if b.len > 0 && (b[0] == u8('+') || b[0] == u8('-'))
+        negative = b[0] == u8('-')
+        i = 1
+
+    if i == b.len then return None
+
+    var n: usize = 0
+
+    while i < b.len
+        if !is_digit(b[i]) then return None
+
+        n = n * 10 + usize(b[i] - u8('0'))
+        i += 1
+
+    if negative && n > 0 then None else Some(n)
+end group_number
+
+// Stable, so groups listed under one number keep the order they were written in.
+private sort_by_group(xs: Buf[(usize, usize, usize, string)])
+    for i in 1..<xs.len()
+        var j = i
+
+        while j > 0 && xs[j - 1].0 > xs[j].0
+            val t = xs[j - 1]
+
+            xs[j - 1] = xs[j]
+            xs[j] = t
+            j -= 1
+
+private sort_usize(xs: Buf[usize])
+    for i in 1..<xs.len()
+        var j = i
+
+        while j > 0 && xs[j - 1] > xs[j]
+            val t = xs[j - 1]
+
+            xs[j - 1] = xs[j]
+            xs[j] = t
+            j -= 1
+
+private min(a: usize, b: usize) -> usize = if a < b then a else b
+
+// An `end` pattern with each `\N` replaced by the text group N of the `begin` match took — nothing
+// where the group took no part — with every character that means something in a pattern escaped.
+// vscode-textmate's `resolveBackReferences` and `escapeRegExpCharacters`.
+private[highlighter] resolve_back_references(src: string, m: Match) -> string
+    val b = src.bytes
+    var out = str_builder()
+    var i: usize = 0
+    var lit = i
+
+    while i < b.len
+        if b[i] == u8('\\') && i + 1 < b.len && is_digit(b[i + 1])
+            out.push(src[lit..<i])
+
+            var j = i + 1
+            var n: usize = 0
+
+            while j < b.len && is_digit(b[j])
+                n = n * 10 + usize(b[j] - u8('0'))
+                j += 1
+
+            m.group(n) match
+                Some(g) -> push_escaped(&out, g)
+                None -> ()
+
+            i = j
+            lit = j
+        else
+            i += 1
+
+    out.push(src[lit..])
+    out.finish()
+end resolve_back_references
+
+private push_escaped(out: *StrBuilder, s: string)
+    val b = s.bytes
+    var lit: usize = 0
+
+    for i in 0..<b.len
+        if needs_escape(b[i])
+            out.push(s[lit..<i])
+            out.push("\\")
+            lit = i
+
+    out.push(s[lit..])
+
+private needs_escape(c: u8) -> bool = c == u8('-') || c == u8('\\') || c == u8('{') || c == u8('}') || c == u8('*') || c == u8('+') || c == u8('?') || c == u8('|') || c == u8('^') || c == u8('$') || c == u8('.') || c == u8(',') || c == u8('[') || c == u8(']') || c == u8('(') || c == u8(')') || c == u8('#') || c == u8(' ') || (c >= 9 && c <= 13)
