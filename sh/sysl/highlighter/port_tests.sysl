@@ -74,6 +74,7 @@ back_reference_closes()
     assert(lines > 0)
     assert(out.contains("<span class=\"hl-string\">echo inside</span>"), out)
     assert(out.contains("<span class=\"hl-function\">echo</span> after"), out)
+end back_reference_closes
 
 @test("an end naming its begin's group does not close on other text")
 back_reference_stays_open()
@@ -102,6 +103,7 @@ back_reference_escaped()
 
     // `a.b` must close on `a.b` and not on `axb`, which an unescaped `.` would take.
     assert_eq(h.highlight("[a.b[ x ]axb] y ]a.b] z"), "<span class=\"hl-string\">[a.b[ x ]axb] y ]a.b]</span> z")
+end back_reference_escaped
 
 @test("a group that took no part stands in an end as nothing")
 back_reference_absent_group()
@@ -115,6 +117,7 @@ back_reference_absent_group()
         """
 
     assert_eq(hl(g).highlight("<a> b"), "<span class=\"hl-string\">&lt;a&gt;</span> b")
+end back_reference_absent_group
 
 @test("vscode-textmate's own rule: every backslash-digit is a reference")
 back_reference_test_is_vscodes()
@@ -150,6 +153,7 @@ zero_length_ends_the_line()
     assert_eq(h.highlight("é\né"), "é\né")
     assert_eq(h.tokens("aéé")[0].len(), 1)
     assert_eq(h.tokens("aéé")[0][0].text, "aéé")
+end zero_length_ends_the_line
 
 @test("a zero-length match at the end of a line ends the line")
 zero_length_at_line_end()
@@ -161,6 +165,7 @@ zero_length_at_line_end()
         """
 
     assert_eq(hl(g).highlight("abc\ndef"), "abc\ndef")
+end zero_length_at_line_end
 
 @test("tokens over non-ASCII text concatenate back to each line")
 tokens_round_trip_utf8()
@@ -170,6 +175,7 @@ tokens_round_trip_utf8()
     assert_eq(lines.len(), 2)
     assert_eq(joined(lines[0]), "val café = \"naïve\" // 日本語")
     assert_eq(joined(lines[1]), "val x = 1")
+end tokens_round_trip_utf8
 
 private joined(line: Buf[Token]) -> string
     var out = str_builder()
@@ -178,6 +184,7 @@ private joined(line: Buf[Token]) -> string
         out.push(t.text)
 
     out.finish()
+end joined
 
 // --- what does not load ---
 
@@ -229,6 +236,7 @@ categories()
     assert_eq(category("meta.block.x"), "")
     assert_eq(category("source.x"), "")
     assert_eq(category(""), "")
+end categories
 
 @test("escape_html escapes the four and nothing else")
 escaping()
@@ -266,3 +274,4 @@ markdown_composition()
     val out = to_html_with(parse("Some code:\n\n```scala\nval x = 1\n```\n\n```text\na < b\n```\n"), opts)
 
     assert_eq(out, "<p>Some code:</p>\n<pre><code class=\"language-scala\"><span class=\"hl-keyword\">val</span> x <span class=\"hl-keyword\">=</span> <span class=\"hl-number\">1</span>\n</code></pre>\n<pre><code class=\"language-text\">a &lt; b\n</code></pre>\n")
+end markdown_composition

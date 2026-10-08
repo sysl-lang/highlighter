@@ -98,6 +98,7 @@ private line_text(line: Buf[Token]) -> string
         out.push(t.text)
 
     out.finish()
+end line_text
 
 private find_token(line: Buf[Token], text: string) -> Token
     for t in line.view()
@@ -121,6 +122,7 @@ token_categories()
     assert_eq(h.category_of(find_token(toks, "val")), "keyword")
     assert_eq(h.category_of(find_token(toks, "42")), "number")
     assert_eq(h.category("comment.line.test"), "comment")
+end token_categories
 
 // --- html escaping ---
 
@@ -235,6 +237,7 @@ mutual_recursion()
         """
 
     assert(hl(g).highlight("hello 42").contains("keyword"))
+end mutual_recursion
 
 // --- $self ---
 
@@ -254,6 +257,7 @@ self_include()
 
     assert(out.contains("keyword"))
     assert(out.contains("number"))
+end self_include
 
 // --- token merging ---
 
@@ -278,6 +282,7 @@ ignores_extra_fields()
         """
 
     assert(from_json(g).is_ok())
+end ignores_extra_fields
 
 // --- nested capture groups ---
 
@@ -365,6 +370,7 @@ zero_length_match()
         """
 
     assert(hl(g).highlight("xyz").len > 0)
+end zero_length_match
 
 @test("POSIX character classes in patterns")
 posix_classes()
@@ -381,6 +387,7 @@ posix_classes()
 
     assert(out.contains("hl-keyword"))
     assert(out.contains("hl-number"))
+end posix_classes
 
 @test("invalid regex in pattern is silently skipped")
 invalid_regex_skipped()
@@ -395,6 +402,7 @@ invalid_regex_skipped()
         """
 
     assert(hl_with(g, Classes("hl-")).highlight("good stuff").contains("hl-keyword"))
+end invalid_regex_skipped
 
 @test("deeply nested $self does not stack overflow")
 deep_self()
@@ -409,6 +417,7 @@ deep_self()
         """
 
     assert(hl_with(g, Classes("hl-")).highlight("(kw (kw (kw)))").count_of("hl-keyword") >= 3)
+end deep_self
 
 @test("contentName adds scope to inner content")
 content_name()
@@ -422,3 +431,4 @@ content_name()
         """
 
     assert(hl_with(g, Classes("hl-")).highlight("{ hello }").contains("hl-string"))
+end content_name

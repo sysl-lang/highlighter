@@ -46,6 +46,7 @@ private corpus() -> Buf[string]
         if f.ends_with(".txt") then out.push(f[0..<f.len - 4])
 
     out
+end corpus
 
 @test("the corpus holds 24 files, each with VS Code's rendering beside it")
 corpus_complete()
@@ -55,6 +56,7 @@ corpus_complete()
 
     for n in names.view()
         assert(read_bytes(s"${corpus_dir()}/${n}.vscode.html").is_ok(), n)
+end corpus_complete
 
 @test("every corpus file but html.1 renders exactly as VS Code renders it")
 corpus_agrees()
@@ -67,6 +69,7 @@ corpus_agrees()
             if d.len() > 0 then bad.push(s"${n}: lines ${d}")
 
     assert(bad.len() == 0, join(bad.view(), "; "))
+end corpus_agrees
 
 @test("html.1 differs from VS Code only in the embedded style and script bodies, which are plain")
 corpus_html_embedded()
@@ -80,3 +83,4 @@ corpus_html_embedded()
 
     assert_eq(ours[7], "    body { margin: 0; color: #333; }")
     assert_eq(ours[20], "    const x = 1; console.log(&quot;hi&quot;, x);")
+end corpus_html_embedded

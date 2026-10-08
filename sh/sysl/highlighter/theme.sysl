@@ -14,6 +14,7 @@ struct Theme
     operator: string
     punctuation: string
     fallback: string
+end Theme
 
 /** Atom's One Dark — the default theme. */
 one_dark() -> Theme = Theme("#c678dd", "#98c379", "#5c6370", "#d19a66", "#e5c07b", "#61afef", "#e06c75", "#56b6c2", "#abb2bf", "#abb2bf")

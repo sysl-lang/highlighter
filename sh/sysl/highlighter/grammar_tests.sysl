@@ -513,6 +513,7 @@ rx_captures()
 
     shows_on(out, "keyword", "if")
     shows_on(out, "variable", "x")
+end rx_captures
 
 // --- loader hardening ---
 
@@ -547,6 +548,7 @@ loader_literal_brace()
     assert_eq(h.load_warnings().len(), 0)
     shows_on(h.highlight("aaa"), "keyword", "aaa")
     shows_on(h.highlight("{x}"), "string", "{x}")
+end loader_literal_brace
 
 @test("loader: tolerates stray non-capture keys inside a captures object")
 loader_stray_keys()
@@ -571,6 +573,7 @@ loader_stray_keys()
 
     assert_eq(h.load_warnings().len(), 0)
     shows(h.highlight("<!-- hi -->"), "comment")
+end loader_stray_keys
 
 @test("loader: load_warnings is empty when every pattern compiles")
 loader_no_warnings()

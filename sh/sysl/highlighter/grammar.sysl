@@ -47,6 +47,7 @@ struct Pattern
 
     // `applyEndPatternLast`: the `end` loses a tie with an inner rule rather than winning it.
     end_last: bool
+end Pattern
 
 /** A whole grammar: the scope every token of the language carries first, its top-level rules, and
  * the repository `#name` includes are resolved against.
@@ -190,6 +191,7 @@ private put_capture(out: Buf[Capture], c: Capture)
             return
 
     out.push(c)
+end put_capture
 
 // `applyEndPatternLast`, which grammars write as `1` or `true`.
 private end_last(o: Json) -> bool

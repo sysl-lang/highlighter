@@ -30,6 +30,7 @@ newline_closes()
         """
 
     assert_eq(hl(g).highlight("# note\nkey"), "<span class=\"hl-comment\"># note</span>\n<span class=\"hl-keyword\">key</span>")
+end newline_closes
 
 @test("newline: YAML's comment does not run on into the next line")
 newline_yaml()
@@ -76,6 +77,31 @@ anchor_after_eol_begin()
         """
 
     assert_eq(hl(g).highlight("=\nab cd\nef\n;"), "=\n<span class=\"hl-keyword\">ab</span> cd\n<span class=\"hl-keyword\">ef</span>\n;")
+end anchor_after_eol_begin
+
+// --- \A holds at the document's start and nowhere else ---
+
+private shebang() -> string = "{ \"scopeName\": \"source.sa\", \"patterns\": [ { \"match\": \"\\\\A#!.*\", \"name\": \"comment.line.shebang.sa\" } ] }"
+
+@test("\\A: holds at the start of the document")
+start_anchor_first_line()
+    assert_eq(hl(shebang()).highlight("#!x\n#!y"), "<span class=\"hl-comment\">#!x</span>\n#!y")
+
+@test("\\A: holds at no other line's start")
+start_anchor_later_line()
+    assert_eq(hl(shebang()).highlight("x\n#!y"), "x\n#!y")
+
+@test("\\A: JavaScript's shebang is one on the first line only")
+start_anchor_javascript()
+    val out = load("javascript").highlight("#!/usr/bin/env node\nlet a = 1\n#!no")
+
+    assert_eq(out, "<span class=\"hl-punctuation\">#!</span><span class=\"hl-comment\">/usr/bin/env node</span>\n<span class=\"hl-keyword\">let</span> <span class=\"hl-variable\">a</span> <span class=\"hl-keyword\">=</span> <span class=\"hl-number\">1</span>\n#<span class=\"hl-keyword\">!</span><span class=\"hl-variable\">no</span>")
+
+@test("\\A: the rewrite leaves an escaped backslash before an A alone")
+start_anchor_rewrite()
+    assert_eq(without_start_anchor("\\A#!"), "\\x{FFFF}#!")
+    assert_eq(without_start_anchor("\\\\A"), "\\\\A")
+    assert_eq(without_start_anchor("a\\Ab"), "a\\x{FFFF}b")
 
 // --- a name may hold several scopes, and $N ---
 
@@ -96,6 +122,7 @@ names_capture_reference()
 
     assert_eq(scopes_of_token(h, "go!", "go!"), "source.n keyword.go.n")
     assert_eq(scopes_of_token(h, "@ab", "@ab"), "source.n entity.AB.n")
+end names_capture_reference
 
 // --- captures ---
 
@@ -109,6 +136,7 @@ captures_apply_to_end()
         """
 
     assert_eq(hl(g).highlight("<a>"), "<span class=\"hl-punctuation\">&lt;</span>a<span class=\"hl-punctuation\">&gt;</span>")
+end captures_apply_to_end
 
 @test("captures: a capture's patterns tokenize its text again")
 captures_retokenized()
@@ -125,6 +153,7 @@ captures_retokenized()
 
     assert_eq(h.highlight("getx("), "<span class=\"hl-keyword\">get</span><span class=\"hl-function\">x</span>(")
     assert_eq(scopes_of_token(h, "getx(", "get"), "source.r entity.name.function.r keyword.r")
+end captures_retokenized
 
 @test("captures: group 0's scope stays beneath the groups inside it")
 captures_group_zero_beneath()
@@ -136,6 +165,7 @@ captures_group_zero_beneath()
         """
 
     assert_eq(scopes_of_token(hl(g), "ab", "a"), "source.z meta.z keyword.z")
+end captures_group_zero_beneath
 
 @test("captures: Go's function name is found by a capture's own patterns")
 captures_go()
@@ -165,6 +195,7 @@ guard_pair_at_one_place()
         """
 
     assert_eq(hl(g).highlight("axy\nz"), "a<span class=\"hl-string\">xy</span>\n<span class=\"hl-string\">z</span>")
+end guard_pair_at_one_place
 
 @test("guards: a pair opening again where it already is, matching nothing, does not")
 guard_reopen()
@@ -176,6 +207,7 @@ guard_reopen()
         """
 
     assert_eq(hl(g).highlight("xy"), "x<span class=\"hl-string\">y</span>")
+end guard_reopen
 
 @test("$base: in a grammar on its own it is the grammar itself")
 base_include()
@@ -190,3 +222,4 @@ base_include()
         """
 
     assert(hl(g).highlight("(kw)").contains("<span class=\"hl-keyword\">kw</span>"))
+end base_include

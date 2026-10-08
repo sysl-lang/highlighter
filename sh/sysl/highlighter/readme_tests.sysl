@@ -1,0 +1,51 @@
+module sh.sysl.highlighter
+@tests
+
+import sh.sysl.markdown.{commonmark_html, parse, to_html_with}
+import sysl.fs.read_bytes
+import sysl.text.{Search, from_utf8}
+
+// The README's examples, as written there, and what it says they print.
+
+private readme_main(file: string) -> (string, string)
+    val json = from_utf8(read_bytes(file).expect("the grammar reads")).expect("the grammar is UTF-8")
+    val rust = from_json(json).expect("the grammar loads")
+    val a = rust.highlight("fn main() {}")
+    val inline = from_json(json, Inline(one_dark())).expect("the grammar loads")
+    val b = inline.highlight("let x = 1;")
+
+    (a, b)
+end readme_main
+
+private render(page: string, scala_grammar: string) -> Result[string, string]
+    val langs = languages()
+
+    langs.add("scala", from_json(scala_grammar)?)
+
+    var opts = commonmark_html()
+
+    opts.highlight = Some(langs.hook())
+    Ok(to_html_with(parse(page), opts))
+end render
+
+@test("README: the opening example prints what the README says")
+readme_opening()
+    val here = __FILE__
+    val root = here[0..<here.last_index_of("/sh/sysl/highlighter/").unwrap()]
+    val r = readme_main(s"${root}/test-grammars/rust.tmLanguage.json")
+    val a = r.0
+    val b = r.1
+
+    assert(a.starts_with("<span class=\"hl-keyword\">fn</span> <span class=\"hl-function\">main</span><span class=\"hl-punctuation\">()</span>"), a)
+    assert(b.starts_with("<span style=\"color:#c678dd\">let</span> <span style=\"color:#e06c75\">x</span> "), b)
+end readme_opening
+
+@test("README: the Markdown composition highlights the scala block")
+readme_markdown()
+    val out = render("```scala\nval x = 1\n```\n", grammar_text("scala")).expect("renders")
+
+    assert_eq(out, "<pre><code class=\"language-scala\"><span class=\"hl-keyword\">val</span> x <span class=\"hl-keyword\">=</span> <span class=\"hl-number\">1</span>\n</code></pre>\n")
+
+@test("README: a grammar that is not JSON is an Err the example's ? passes on")
+readme_error()
+    assert(render("x", "not json").is_err())

@@ -55,6 +55,7 @@ struct Highlighter
             out.push(merge(line))
 
         out
+    end tokens
 
     /** `category(scope)`, as a method beside `tokens`. */
     category(self, scope: string) -> string = category(scope)
@@ -167,6 +168,7 @@ private entity(c: u8) -> string
     if c == u8('"') then return "&quot;"
 
     ""
+end entity
 
 private innermost(t: Token) -> string = if t.scopes.len() > 0 then t.scopes[t.scopes.len() - 1] else ""
 

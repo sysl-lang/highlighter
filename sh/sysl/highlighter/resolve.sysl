@@ -39,6 +39,7 @@ private[highlighter] struct Rule
     content_name: Option[string]
     is_self: bool
     end_last: bool
+end Rule
 
 // The `$self` marker: never matched, and replaced by the top-level rules wherever a `begin` rule's
 // inner patterns are taken.
@@ -79,6 +80,7 @@ private sizes(m: Map[string, Buf[Rule]]) -> Map[string, usize]
         out.put(k, v.len())
 
     out
+end sizes
 
 private same_sizes(a: Map[string, usize], b: Map[string, usize]) -> bool
     if a.len() != b.len() then return false
@@ -87,6 +89,7 @@ private same_sizes(a: Map[string, usize], b: Map[string, usize]) -> bool
         if b.get(k) != Some(v) then return false
 
     true
+end same_sizes
 
 // Whether a pattern refers to a group by number — `\` and a digit anywhere, which is the test
 // vscode-textmate makes.
@@ -97,6 +100,7 @@ private[highlighter] has_back_references(p: string) -> bool
         if b[i] == u8('\\') && i + 1 < b.len && is_digit(b[i + 1]) then return true
 
     false
+end has_back_references
 
 private[highlighter] is_digit(c: u8) -> bool = c >= u8('0') && c <= u8('9')
 
@@ -156,6 +160,7 @@ private struct Resolver
                 out.push(r)
 
         out
+    end all
 
     one(*self, p: Pattern) -> Buf[Rule]
         var out: Buf[Rule] = buf()
