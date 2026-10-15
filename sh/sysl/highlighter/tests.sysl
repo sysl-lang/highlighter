@@ -312,6 +312,53 @@ nested_no_duplicate()
 nested_innermost_wins()
     assert(hl_with(nested(), Classes("hl-")).highlight("foo:bar").contains("<span class=\"hl-punctuation\">:</span>"))
 
+// --- a token's category comes from its whole scope stack ---
+
+private stacked() -> string = raw"""
+    {
+      "scopeName": "source.stacked",
+      "patterns": [
+        { "begin": "\"", "end": "\"", "name": "string.quoted.double.stacked",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.stacked" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.stacked" } },
+          "patterns": [
+            { "match": ",", "name": "punctuation.separator.stacked" },
+            { "match": "_+", "name": "meta.foo.stacked" }
+          ] },
+        { "match": "(//).*$", "name": "comment.line.stacked",
+          "captures": { "1": { "name": "punctuation.definition.comment.stacked" } } },
+        { "match": "<", "name": "punctuation.definition.tag.stacked" }
+      ]
+    }
+    """
+
+@test("a string's quotes take the string category")
+quotes_are_string()
+    assert_eq(hl(stacked()).highlight("\"hi\""), "<span class=\"hl-string\">&quot;</span><span class=\"hl-string\">hi</span><span class=\"hl-string\">&quot;</span>")
+
+@test("a line comment's marker takes the comment category")
+comment_marker_is_comment()
+    assert_eq(hl(stacked()).highlight("// x"), "<span class=\"hl-comment\">//</span><span class=\"hl-comment\"> x</span>")
+
+@test("a punctuation.definition scope with no categorised parent stays punctuation")
+definition_without_parent()
+    assert_eq(hl(stacked()).highlight("<"), "<span class=\"hl-punctuation\">&lt;</span>")
+
+@test("a punctuation scope that is not a definition stays punctuation inside a string")
+separator_in_string()
+    assert_eq(hl(stacked()).highlight("\"a,b\""), "<span class=\"hl-string\">&quot;</span><span class=\"hl-string\">a</span><span class=\"hl-punctuation\">,</span><span class=\"hl-string\">b</span><span class=\"hl-string\">&quot;</span>")
+
+@test("an uncategorised innermost scope takes the category of the scope enclosing it")
+uncategorised_inner_scope()
+    assert_eq(hl(stacked()).highlight("\"a__b\""), "<span class=\"hl-string\">&quot;</span><span class=\"hl-string\">a</span><span class=\"hl-string\">__</span><span class=\"hl-string\">b</span><span class=\"hl-string\">&quot;</span>")
+
+@test("category_of reads the whole stack and is the category the renderer uses")
+category_of_whole_stack()
+    val h = hl(stacked())
+    val toks = h.tokens("\"hi\"")[0]
+
+    assert_eq(h.category_of(toks[0]), "string")
+
 // --- edge cases ---
 
 @test("empty input")

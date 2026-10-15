@@ -1,4 +1,4 @@
-<span class="hl-punctuation">&quot;&quot;&quot;</span><span class="hl-string">A module docstring.</span><span class="hl-punctuation">&quot;&quot;&quot;</span>
+<span class="hl-string">&quot;&quot;&quot;</span><span class="hl-string">A module docstring.</span><span class="hl-string">&quot;&quot;&quot;</span>
 <span class="hl-keyword">from</span> __future__ <span class="hl-keyword">import</span> annotations
 
 <span class="hl-keyword">import</span> os
@@ -9,7 +9,7 @@
 <span class="hl-variable">MASK</span> <span class="hl-keyword">=</span> <span class="hl-keyword">0x</span><span class="hl-number">FF</span> <span class="hl-keyword">&amp;</span> <span class="hl-keyword">~</span><span class="hl-keyword">0b</span><span class="hl-number">1010</span>
 
 
-<span class="hl-punctuation">@</span><span class="hl-function">dataclass</span><span class="hl-punctuation">(</span><span class="hl-variable">frozen</span><span class="hl-keyword">=</span><span class="hl-variable">True</span><span class="hl-punctuation">)</span>
+<span class="hl-function">@</span><span class="hl-function">dataclass</span><span class="hl-punctuation">(</span><span class="hl-variable">frozen</span><span class="hl-keyword">=</span><span class="hl-variable">True</span><span class="hl-punctuation">)</span>
 <span class="hl-keyword">class</span> <span class="hl-type">Point</span><span class="hl-punctuation">:</span>
     x<span class="hl-punctuation">:</span> <span class="hl-type">float</span> <span class="hl-keyword">=</span> <span class="hl-number">0.0</span>
     y<span class="hl-punctuation">:</span> <span class="hl-type">float</span> <span class="hl-keyword">=</span> <span class="hl-number">0.0</span>
@@ -30,10 +30,10 @@
 
 
 <span class="hl-keyword">def</span> <span class="hl-function">café</span><span class="hl-punctuation">(</span><span class="hl-variable">naïve</span><span class="hl-punctuation">:</span> <span class="hl-type">str</span><span class="hl-punctuation">)</span> <span class="hl-punctuation">-&gt;</span> <span class="hl-type">str</span><span class="hl-punctuation">:</span>
-    s <span class="hl-keyword">=</span> <span class="hl-punctuation">'</span><span class="hl-string">single</span><span class="hl-punctuation">'</span> <span class="hl-keyword">+</span> <span class="hl-punctuation">&quot;</span><span class="hl-string">double</span><span class="hl-punctuation">&quot;</span> <span class="hl-keyword">+</span> <span class="hl-keyword">r</span><span class="hl-punctuation">&quot;</span><span class="hl-string">raw</span>\d<span class="hl-keyword">+</span><span class="hl-punctuation">&quot;</span> <span class="hl-keyword">+</span> <span class="hl-keyword">b</span><span class="hl-punctuation">&quot;</span><span class="hl-string">bytes</span><span class="hl-punctuation">&quot;</span><span class="hl-punctuation">.</span>decode<span class="hl-punctuation">(</span><span class="hl-punctuation">)</span>
+    s <span class="hl-keyword">=</span> <span class="hl-string">'</span><span class="hl-string">single</span><span class="hl-string">'</span> <span class="hl-keyword">+</span> <span class="hl-string">&quot;</span><span class="hl-string">double</span><span class="hl-string">&quot;</span> <span class="hl-keyword">+</span> <span class="hl-keyword">r</span><span class="hl-string">&quot;</span><span class="hl-string">raw</span><span class="hl-string">\d</span><span class="hl-keyword">+</span><span class="hl-string">&quot;</span> <span class="hl-keyword">+</span> <span class="hl-keyword">b</span><span class="hl-string">&quot;</span><span class="hl-string">bytes</span><span class="hl-string">&quot;</span><span class="hl-punctuation">.</span>decode<span class="hl-punctuation">(</span><span class="hl-punctuation">)</span>
     <span class="hl-keyword">return</span> s <span class="hl-keyword">if</span> naïve <span class="hl-keyword">else</span> <span class="hl-variable">None</span>
 
 
 squares <span class="hl-keyword">=</span> <span class="hl-punctuation">[</span>n <span class="hl-keyword">*</span> n <span class="hl-keyword">for</span> n <span class="hl-keyword">in</span> <span class="hl-function">range</span><span class="hl-punctuation">(</span><span class="hl-number">10</span><span class="hl-punctuation">)</span> <span class="hl-keyword">if</span> n <span class="hl-keyword">%</span> <span class="hl-number">2</span> <span class="hl-keyword">==</span> <span class="hl-number">0</span><span class="hl-punctuation">]</span>
 lam <span class="hl-keyword">=</span> <span class="hl-keyword">lambda</span> <span class="hl-variable">a</span><span class="hl-punctuation">,</span> <span class="hl-variable">b</span><span class="hl-keyword">=</span><span class="hl-number">2</span><span class="hl-punctuation">:</span> a <span class="hl-keyword">and</span> <span class="hl-keyword">not</span> b <span class="hl-keyword">or</span> <span class="hl-variable">True</span>
-x <span class="hl-keyword">=</span> <span class="hl-punctuation">&quot;</span><span class="hl-string">a</span><span class="hl-punctuation">&quot;</span> <span class="hl-keyword">if</span> y <span class="hl-keyword">else</span> <span class="hl-punctuation">'</span><span class="hl-string">b</span><span class="hl-punctuation">'</span>
+x <span class="hl-keyword">=</span> <span class="hl-string">&quot;</span><span class="hl-string">a</span><span class="hl-string">&quot;</span> <span class="hl-keyword">if</span> y <span class="hl-keyword">else</span> <span class="hl-string">'</span><span class="hl-string">b</span><span class="hl-string">'</span>

@@ -60,19 +60,21 @@ struct Highlighter
     /** `category(scope)`, as a method beside `tokens`. */
     category(self, scope: string) -> string = category(scope)
 
-    /** The rendering category of a token: `category` of its innermost scope. */
-    category_of(self, t: Token) -> string = category(innermost(t))
+    /** The rendering category of a token, read from its whole scope stack: the category of its
+     * innermost scope that has one, except that a `punctuation.definition.*` scope defers to the
+     * nearest enclosing scope that has one (so a string's quotes and a comment's marker take the
+     * string or comment colour) and is `punctuation` only where nothing encloses it with a category.
+     * `""` where no scope has one. */
+    category_of(self, t: Token) -> string = token_category(t)
 
     private render(self, out: *StrBuilder, t: Token)
         if t.text.len == 0 then return
 
         val text = escape_html(t.text)
-        val scope = innermost(t)
+        val cat = token_category(t)
 
         self.mode match
             Classes(prefix) ->
-                val cat = if scope.len == 0 then "" else category(scope)
-
                 if cat.len > 0
                     out.push("<span class=\"")
                     out.push(prefix)
@@ -83,7 +85,7 @@ struct Highlighter
                 else
                     out.push(text)
             Inline(theme) ->
-                val colour = colour_of(category(scope), theme)
+                val colour = colour_of(cat, theme)
 
                 if colour.len > 0
                     out.push("<span style=\"color:")
@@ -119,6 +121,8 @@ from_json(text: string, mode: RenderMode = classes()) -> Result[Highlighter, str
  * | `variable` | `variable` |
  * | `support` | `type` where it holds `type`, `function` where it holds `function`, else none |
  * | `punctuation` | `punctuation` |
+ *
+ * A token has several scopes, and `Highlighter.category_of` reads them all: see there.
  */
 category(scope: string) -> string
     val head = scope.index_of(".") match
@@ -170,7 +174,23 @@ private entity(c: u8) -> string
     ""
 end entity
 
-private innermost(t: Token) -> string = if t.scopes.len() > 0 then t.scopes[t.scopes.len() - 1] else ""
+private token_category(t: Token) -> string
+    var deferred = false
+    var i = t.scopes.len()
+
+    while i > 0
+        i -= 1
+
+        val scope = t.scopes[i]
+        val cat = category(scope)
+
+        if cat.len > 0
+            if !scope.starts_with("punctuation.definition.") then return cat
+
+            deferred = true
+
+    if deferred then "punctuation" else ""
+end token_category
 
 private colour_of(cat: string, theme: Theme) -> string
     if cat == "" then return ""

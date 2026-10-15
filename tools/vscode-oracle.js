@@ -34,6 +34,20 @@ function category(scope) {
   return '';
 }
 
+// A token's category from its whole scope stack, innermost first: the first scope with a category
+// wins, except that `punctuation.definition.*` defers to the nearest enclosing scope with one and is
+// `punctuation` only where none encloses it.
+function tokenCategory(scopes) {
+  let deferred = false;
+  for (let i = scopes.length - 1; i >= 0; i--) {
+    const c = category(scopes[i]);
+    if (!c) continue;
+    if (!scopes[i].startsWith('punctuation.definition.')) return c;
+    deferred = true;
+  }
+  return deferred ? 'punctuation' : '';
+}
+
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 (async () => {
@@ -70,7 +84,7 @@ const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&
       }
       out.push(merged.map(t => {
         if (!t.text) return '';
-        const c = category(t.scopes[t.scopes.length - 1] || '');
+        const c = tokenCategory(t.scopes);
         return c ? `<span class="hl-${c}">${esc(t.text)}</span>` : esc(t.text);
       }).join(''));
     }

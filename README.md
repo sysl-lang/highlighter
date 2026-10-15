@@ -6,7 +6,7 @@ the tokens themselves, for a renderer of your own.
 
 ```hocon
 dependencies {
-  highlighter { git = "github.com/sysl-lang/highlighter", version = "0.1.1" }
+  highlighter { git = "github.com/sysl-lang/highlighter", version = "0.1.2" }
 }
 ```
 
@@ -45,7 +45,7 @@ what every one of these grammars is written and tested against (see *How it toke
 | `h.highlight(code) -> string` | HTML: each line's tokens escaped and wrapped in a `<span>` naming its category, lines joined by `\n`; no `<pre>` around it |
 | `h.tokens(code) -> Buf[Buf[Token]]` | the structured form: one list per line, adjacent tokens with the same scopes merged; each line's texts concatenated are the line |
 | `Token(text, scopes)` | a piece of a line and its scopes, outermost first — the grammar's scope, then one per enclosing rule and capture |
-| `category(scope)`, `h.category_of(token)` | the rendering category of a scope (a token's is its innermost) |
+| `category(scope)`, `h.category_of(token)` | the rendering category of a scope; a token's is read from its whole scope stack: its innermost scope that has one, where a `punctuation.definition.*` scope defers to the nearest enclosing one that has one (a string's quotes are `string`, a comment's marker `comment`) |
 | `h.load_warnings() -> Buf[string]` | every pattern that did not compile, with Oniguruma's reason; the rule holding it is left out and the rest of the grammar works |
 | `Classes(prefix)`, `classes()`, `Inline(theme)` | how `highlight` writes a span: `class="hl-keyword"`, or `style="color:#c678dd"` |
 | `one_dark()` … `catppuccin_mocha()` | thirteen themes: One Dark and Light, Monokai, Dracula, Solarized Dark and Light, GitHub Dark and Light, Nord, Gruvbox Dark and Light, Tokyo Night, Catppuccin Mocha |
@@ -143,11 +143,11 @@ unresolved as the Scala port left them. Every difference since is one of the cha
 
 ## The tests
 
-202, all against something outside the code under test:
+208, all against something outside the code under test:
 
 | file | | |
 |---|---|---|
-| `tests.sysl` | 37 | the Scala `Tests` suite, test for test |
+| `tests.sysl` | 43 | the Scala `Tests` suite, test for test |
 | `grammar_tests.sysl` | 111 | the Scala `RealWorldGrammarTests`, test for test, over the vendored grammars |
 | `vscode_tests.sysl` | 21 | each VS Code rule above, every exact expectation confirmed against vscode-textmate |
 | `port_tests.sysl` | 27 | `\b`/`\w` (`síif`, `realíssimo`, `naïve`), back-references, character boundaries, the error paths, the renderer, `Languages` and the Markdown composition |

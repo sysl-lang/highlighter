@@ -95,7 +95,7 @@ start_anchor_later_line()
 start_anchor_javascript()
     val out = load("javascript").highlight("#!/usr/bin/env node\nlet a = 1\n#!no")
 
-    assert_eq(out, "<span class=\"hl-punctuation\">#!</span><span class=\"hl-comment\">/usr/bin/env node</span>\n<span class=\"hl-keyword\">let</span> <span class=\"hl-variable\">a</span> <span class=\"hl-keyword\">=</span> <span class=\"hl-number\">1</span>\n#<span class=\"hl-keyword\">!</span><span class=\"hl-variable\">no</span>")
+    assert_eq(out, "<span class=\"hl-comment\">#!</span><span class=\"hl-comment\">/usr/bin/env node</span>\n<span class=\"hl-keyword\">let</span> <span class=\"hl-variable\">a</span> <span class=\"hl-keyword\">=</span> <span class=\"hl-number\">1</span>\n#<span class=\"hl-keyword\">!</span><span class=\"hl-variable\">no</span>")
 
 @test("\\A: the rewrite leaves an escaped backslash before an A alone")
 start_anchor_rewrite()
