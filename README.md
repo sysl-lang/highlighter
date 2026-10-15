@@ -155,7 +155,8 @@ unresolved as the Scala port left them. Every difference since is one of the cha
 | `readme_tests.sysl` | 3 | this README's examples, as written here, and what they print |
 
 **No Scala test's expectation changed.** All 148 pass as written; the loading tests are stronger here,
-asserting that no pattern of any of the thirteen grammars is refused.
+asserting that no pattern of any of the thirteen grammars is refused. `PARITY.md` maps every Scala
+test to the test here that covers it.
 
 The fixes the Scala highlighter carried are here with their tests: a keyword is not found inside a
 word (`\b` is Unicode); a zero-length `begin`/`end` pair at one position does not loop (bash's
