@@ -1,6 +1,6 @@
 # Parity with the Scala highlighter
 
-Every unit test of `/Users/ed/dev/highlighter` (`Tests.scala`, `RealWorldGrammarTests.scala`) and the sysl test that covers it. The sysl name keeps the Scala test's name, so `grep -F` finds either. Audited at v0.1.2: nothing was missing; every row asserts the same input and the same thing, the grammar-loading rows more strictly (no load warning at all).
+One file, both directions. The first table maps every unit test of `/Users/ed/dev/highlighter` (`Tests.scala`, `RealWorldGrammarTests.scala`) to the sysl test that covers it; the second maps every sysl test with no Scala original to its port in the Scala repo (`Tests.scala`, which runs on JVM, JS and Native, and the JVM-only `VsCodeParityTests.scala`). A test keeps its name on the other side, so `grep -F` finds either. Audited at v0.1.2: nothing was missing on the sysl side; every row asserts the same input and the same thing, the grammar-loading rows more strictly (no load warning at all).
 
 ## Tests.scala -> sh/sysl/highlighter/tests.sysl
 
@@ -43,6 +43,13 @@ Every unit test of `/Users/ed/dev/highlighter` (`Tests.scala`, `RealWorldGrammar
 | Tests | invalid regex in pattern is silently skipped | tests.sysl: invalid regex in pattern is silently skipped |
 | Tests | deeply nested $self does not stack overflow | tests.sysl: deeply nested $self does not stack overflow |
 | Tests | contentName adds scope to inner content | tests.sysl: contentName adds scope to inner content |
+| the category is read from the whole scope stack | a string's quotes take the string's category | tests.sysl: a string's quotes take the string category |
+| the category is read from the whole scope stack | a comment's marker takes the comment's category | tests.sysl: a line comment's marker takes the comment category |
+| the category is read from the whole scope stack | a definition with no categorised enclosing scope is still punctuation | tests.sysl: a punctuation.definition scope with no categorised parent stays punctuation |
+| the category is read from the whole scope stack | a definition nested in another definition still reaches the construct around both | tests.sysl: a definition nested in another definition still reaches the construct around both |
+| the category is read from the whole scope stack | other punctuation inside a string keeps its own category | tests.sysl: a punctuation scope that is not a definition stays punctuation inside a string |
+| the category is read from the whole scope stack | an uncategorised inner scope inside a string is string | tests.sysl: an uncategorised innermost scope takes the category of the scope enclosing it |
+| the category is read from the whole scope stack | rendered HTML agrees with categoryOf | tests.sysl: category_of reads the whole stack and is the category the renderer uses |
 
 ## RealWorldGrammarTests.scala -> sh/sysl/highlighter/grammar_tests.sysl
 
@@ -159,3 +166,77 @@ Every unit test of `/Users/ed/dev/highlighter` (`Tests.scala`, `RealWorldGrammar
 | loader | the engine handles a literal { without breaking quantifiers | grammar_tests.sysl: loader: the engine handles a literal { without breaking quantifiers |
 | loader | tolerates stray non-capture keys inside a captures object | grammar_tests.sysl: loader: tolerates stray non-capture keys inside a captures object |
 | loader | load_warnings is empty when every pattern compiles | grammar_tests.sysl: loader: load_warnings is empty when every pattern compiles |
+
+## sysl-only tests -> the Scala repo
+
+Tests the sysl suite added that the Scala suite had no original of, and the Scala test that now ports each. Where the port ran red against the old Scala tokenizer, the Scala tokenizer was rewritten after vscode-textmate (0.0.15) rather than the test weakened; the sysl highlighter is the reference, checked byte for byte against VS Code.
+
+Five rows are `ignore`d in Scala, all for one cause: the Scala `oniguruma` engine reads `\w` as ASCII (Ruby's rule) where vscode-oniguruma reads it as Unicode, so `\w+` stops at an accented letter. That is the engine's option to add, not the highlighter's. While it is absent `VsCodeParityTests.scala` also holds "every corpus file but html.1 renders as VS Code renders it on every line without a non-ASCII letter", which does pass; every line the full corpus test differs on holds a non-ASCII letter.
+
+The six `tests.sysl` rows below about categories (from "a string's quotes" to "category_of reads the whole stack") have the Scala suite's own originals in the first table; their ports sit in `Tests.scala` beside them as the sysl suite's renderings of the same rule.
+
+| sysl test | Scala port |
+|---|---|
+| vscode_tests.sysl: \A: holds at no other line's start | Tests.scala: \A: holds at no other line's start |
+| vscode_tests.sysl: \A: holds at the start of the document | Tests.scala: \A: holds at the start of the document |
+| vscode_tests.sysl: \A: JavaScript's shebang is one on the first line only | VsCodeParityTests.scala: \A: JavaScript's shebang is one on the first line only |
+| vscode_tests.sysl: \A: the rewrite leaves an escaped backslash before an A alone | Tests.scala: \A: the rewrite leaves an escaped backslash before an A alone |
+| port_tests.sysl: \b in a real grammar: Scala's 'if' inside 'síif' is not coloured | VsCodeParityTests.scala: \b in a real grammar: Scala's 'if' inside 'síif' is not coloured |
+| port_tests.sysl: \b: 'if' at the end of 'síif' is not a keyword | Tests.scala: \b: 'if' at the end of 'síif' is not a keyword (ignored: the oniguruma engine reads `\w` as ASCII) |
+| port_tests.sysl: \b: 'real' at the start of 'realíssimo' is not a keyword | Tests.scala: \b: 'real' at the start of 'realíssimo' is not a keyword (ignored: the oniguruma engine reads `\w` as ASCII) |
+| port_tests.sysl: \b: a keyword standing alone beside a non-ASCII word still is one | Tests.scala: \b: a keyword standing alone beside a non-ASCII word still is one (ignored: the oniguruma engine reads `\w` as ASCII) |
+| vscode_tests.sysl: \G: a begin match running to the end of its line makes it hold at each later line's start | Tests.scala: \G: a begin match running to the end of its line makes it hold at each later line's start |
+| vscode_tests.sysl: \G: holds nowhere at the start of a line | Tests.scala: \G: holds nowhere at the start of a line |
+| vscode_tests.sysl: \G: holds where the begin match ended | Tests.scala: \G: holds where the begin match ended |
+| port_tests.sysl: \w is Unicode, as in VS Code: one \w+ takes 'naïve' whole | Tests.scala: \w is Unicode, as in VS Code: one \w+ takes 'naïve' whole (ignored: the oniguruma engine reads `\w` as ASCII) |
+| vscode_tests.sysl: $base: in a grammar on its own it is the grammar itself | Tests.scala: $base: in a grammar on its own it is the grammar itself |
+| port_tests.sysl: a begin group's text is escaped before it stands in an end | Tests.scala: a begin group's text is escaped before it stands in an end |
+| port_tests.sysl: a grammar with no scopeName is refused | Tests.scala: a grammar with no scopeName is refused |
+| port_tests.sysl: a group that took no part stands in an end as nothing | Tests.scala: a group that took no part stands in an end as nothing |
+| port_tests.sysl: a JSON value that is not an object is refused | Tests.scala: a JSON value that is not an object is refused |
+| tests.sysl: a line comment's marker takes the comment category | Tests.scala: a line comment's marker takes the comment category |
+| tests.sysl: a punctuation scope that is not a definition stays punctuation inside a string | Tests.scala: a punctuation scope that is not a definition stays punctuation inside a string |
+| tests.sysl: a punctuation.definition scope with no categorised parent stays punctuation | Tests.scala: a punctuation.definition scope with no categorised parent stays punctuation |
+| port_tests.sysl: a rule key holding the wrong kind of value is refused, naming it | Tests.scala: a rule key holding the wrong kind of value is refused, naming it |
+| port_tests.sysl: a rule that matches nothing where the line stands ends the line's matching, as in VS Code | Tests.scala: a rule that matches nothing where the line stands ends the line's matching, as in VS Code |
+| tests.sysl: a string's quotes take the string category | Tests.scala: a string's quotes take the string category |
+| port_tests.sysl: a zero-length match at the end of a line ends the line | Tests.scala: a zero-length match at the end of a line ends the line |
+| port_tests.sysl: an end naming its begin's group closes on that group's text | Tests.scala: an end naming its begin's group closes on that group's text |
+| port_tests.sysl: an end naming its begin's group does not close on other text | Tests.scala: an end naming its begin's group does not close on other text |
+| port_tests.sysl: an include of a repository entry that does not exist resolves to nothing | Tests.scala: an include of a repository entry that does not exist resolves to nothing |
+| tests.sysl: an uncategorised innermost scope takes the category of the scope enclosing it | Tests.scala: an uncategorised innermost scope takes the category of the scope enclosing it |
+| vscode_tests.sysl: applyEndPatternLast: the end wins a tie by default | Tests.scala: applyEndPatternLast: the end wins a tie by default |
+| vscode_tests.sysl: applyEndPatternLast: under it an inner rule wins the tie | Tests.scala: applyEndPatternLast: under it an inner rule wins the tie |
+| vscode_tests.sysl: captures: a begin/end rule's captures apply to its end as well | Tests.scala: captures: a begin/end rule's captures apply to its end as well |
+| vscode_tests.sysl: captures: a capture's patterns tokenize its text again | Tests.scala: captures: a capture's patterns tokenize its text again |
+| vscode_tests.sysl: captures: Go's function name is found by a capture's own patterns | VsCodeParityTests.scala: captures: Go's function name is found by a capture's own patterns |
+| vscode_tests.sysl: captures: group 0's scope stays beneath the groups inside it | Tests.scala: captures: group 0's scope stays beneath the groups inside it |
+| tests.sysl: category_of reads the whole stack and is the category the renderer uses | Tests.scala: category_of reads the whole stack and is the category the renderer uses |
+| port_tests.sysl: category: every row of the table | Tests.scala: category: every row of the table |
+| port_tests.sysl: escape_html escapes the four and nothing else | Tests.scala: escape_html escapes the four and nothing else |
+| equivalence_tests.sysl: every corpus file but html.1 renders exactly as VS Code renders it | VsCodeParityTests.scala: every corpus file but html.1 renders exactly as VS Code renders it (ignored: the oniguruma engine reads `\w` as ASCII) |
+| vscode_tests.sysl: guards: a pair opening again where it already is, matching nothing, does not | Tests.scala: guards: a pair opening again where it already is, matching nothing, does not |
+| vscode_tests.sysl: guards: a pair that opens and closes at one place matching nothing stays open, and the line ends | Tests.scala: guards: a pair that opens and closes at one place matching nothing stays open, and the line ends |
+| equivalence_tests.sysl: html.1 differs from VS Code only in the embedded style and script bodies, which are plain | VsCodeParityTests.scala: html.1 differs from VS Code only in the embedded style and script bodies, which are plain |
+| port_tests.sysl: inline rendering writes the theme's colour for each category | Tests.scala: inline rendering writes the theme's colour for each category |
+| vscode_tests.sysl: names: $N stands for the group's text | Tests.scala: names: $N stands for the group's text |
+| vscode_tests.sysl: names: a name holding several scopes is that many scopes, the last innermost | VsCodeParityTests.scala: names: a name holding several scopes is that many scopes, the last innermost |
+| vscode_tests.sysl: newline: a rule ending on \n closes at the end of its line | Tests.scala: newline: a rule ending on \n closes at the end of its line |
+| vscode_tests.sysl: newline: the newline itself is in no token | VsCodeParityTests.scala: newline: the newline itself is in no token |
+| vscode_tests.sysl: newline: YAML's comment does not run on into the next line | VsCodeParityTests.scala: newline: YAML's comment does not run on into the next line |
+| port_tests.sysl: python: a string closes on the quote it opened with, and the code after it is code | VsCodeParityTests.scala: python: a string closes on the quote it opened with, and the code after it is code |
+| port_tests.sysl: text that is not JSON is refused, with the reader's diagnostic | Tests.scala: text that is not JSON is refused, with the reader's diagnostic |
+| equivalence_tests.sysl: the corpus holds 24 files, each with VS Code's rendering beside it | VsCodeParityTests.scala: the corpus holds 24 files, each with VS Code's rendering beside it |
+| port_tests.sysl: tokens over non-ASCII text concatenate back to each line | VsCodeParityTests.scala: tokens over non-ASCII text concatenate back to each line |
+| port_tests.sysl: two pairs open at once each close on their own text | Tests.scala: two pairs open at once each close on their own text |
+| port_tests.sysl: vscode-textmate's own rule: every backslash-digit is a reference | Tests.scala: vscode-textmate's own rule: every backslash-digit is a reference |
+
+### Not ported
+
+Seven sysl tests have no Scala counterpart, because the Scala library has nothing for them to test:
+
+| sysl test | why |
+|---|---|
+| port_tests: `languages:` x3 | `Languages` (a registry that picks a grammar by a fenced block's first word) does not exist in the Scala library |
+| port_tests: `markdown:` hook | the hook composes with `sh.sysl.markdown`, a sysl package |
+| readme_tests: `README:` x3 | they run the sysl README's examples against its text |

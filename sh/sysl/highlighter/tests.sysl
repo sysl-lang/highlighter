@@ -1,7 +1,7 @@
 module sh.sysl.highlighter
 @tests
 
-import sysl.buf.Buf
+import sysl.buf.{Buf, buf}
 import sysl.text.{Search, str_builder}
 
 // The Scala highlighter's `Tests` suite, test for test: small grammars written inline, each
@@ -358,6 +358,17 @@ category_of_whole_stack()
     val toks = h.tokens("\"hi\"")[0]
 
     assert_eq(h.category_of(toks[0]), "string")
+
+@test("a definition nested in another definition still reaches the construct around both")
+nested_definition_reaches_construct()
+    val h = hl(stacked())
+    var scopes: Buf[string] = buf()
+    scopes.push("source.stacked")
+    scopes.push("string.quoted.double.stacked")
+    scopes.push("punctuation.definition.tag.stacked")
+    scopes.push("punctuation.definition.string.begin.stacked")
+
+    assert_eq(h.category_of(Token("<", scopes)), "string")
 
 // --- edge cases ---
 
