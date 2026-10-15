@@ -171,7 +171,7 @@ One file, both directions. The first table maps every unit test of `/Users/ed/de
 
 Tests the sysl suite added that the Scala suite had no original of, and the Scala test that now ports each. Where the port ran red against the old Scala tokenizer, the Scala tokenizer was rewritten after vscode-textmate (0.0.15) rather than the test weakened; the sysl highlighter is the reference, checked byte for byte against VS Code.
 
-Five rows are `ignore`d in Scala, all for one cause: the Scala `oniguruma` engine reads `\w` as ASCII (Ruby's rule) where vscode-oniguruma reads it as Unicode, so `\w+` stops at an accented letter. That is the engine's option to add, not the highlighter's. While it is absent `VsCodeParityTests.scala` also holds "every corpus file but html.1 renders as VS Code renders it on every line without a non-ASCII letter", which does pass; every line the full corpus test differs on holds a non-ASCII letter.
+No row is `ignore`d in Scala. The Scala highlighter compiles every pattern with the `oniguruma` engine's `Syntax.Oniguruma` (0.0.8), which reads `\w`, `\d`, `\s`, `\b` and the POSIX classes as Unicode, the way vscode-oniguruma does, so the `\w` and `\b` rows and the whole-corpus row run and pass there as they do here. `VsCodeParityTests.scala` also keeps "every corpus file but html.1 renders as VS Code renders it on every line without a non-ASCII letter", which has no sysl counterpart and is subsumed by the whole-corpus row.
 
 The six `tests.sysl` rows below about categories (from "a string's quotes" to "category_of reads the whole stack") have the Scala suite's own originals in the first table; their ports sit in `Tests.scala` beside them as the sysl suite's renderings of the same rule.
 
@@ -182,13 +182,13 @@ The six `tests.sysl` rows below about categories (from "a string's quotes" to "c
 | vscode_tests.sysl: \A: JavaScript's shebang is one on the first line only | VsCodeParityTests.scala: \A: JavaScript's shebang is one on the first line only |
 | vscode_tests.sysl: \A: the rewrite leaves an escaped backslash before an A alone | Tests.scala: \A: the rewrite leaves an escaped backslash before an A alone |
 | port_tests.sysl: \b in a real grammar: Scala's 'if' inside 'síif' is not coloured | VsCodeParityTests.scala: \b in a real grammar: Scala's 'if' inside 'síif' is not coloured |
-| port_tests.sysl: \b: 'if' at the end of 'síif' is not a keyword | Tests.scala: \b: 'if' at the end of 'síif' is not a keyword (ignored: the oniguruma engine reads `\w` as ASCII) |
-| port_tests.sysl: \b: 'real' at the start of 'realíssimo' is not a keyword | Tests.scala: \b: 'real' at the start of 'realíssimo' is not a keyword (ignored: the oniguruma engine reads `\w` as ASCII) |
-| port_tests.sysl: \b: a keyword standing alone beside a non-ASCII word still is one | Tests.scala: \b: a keyword standing alone beside a non-ASCII word still is one (ignored: the oniguruma engine reads `\w` as ASCII) |
+| port_tests.sysl: \b: 'if' at the end of 'síif' is not a keyword | Tests.scala: \b: 'if' at the end of 'síif' is not a keyword |
+| port_tests.sysl: \b: 'real' at the start of 'realíssimo' is not a keyword | Tests.scala: \b: 'real' at the start of 'realíssimo' is not a keyword |
+| port_tests.sysl: \b: a keyword standing alone beside a non-ASCII word still is one | Tests.scala: \b: a keyword standing alone beside a non-ASCII word still is one |
 | vscode_tests.sysl: \G: a begin match running to the end of its line makes it hold at each later line's start | Tests.scala: \G: a begin match running to the end of its line makes it hold at each later line's start |
 | vscode_tests.sysl: \G: holds nowhere at the start of a line | Tests.scala: \G: holds nowhere at the start of a line |
 | vscode_tests.sysl: \G: holds where the begin match ended | Tests.scala: \G: holds where the begin match ended |
-| port_tests.sysl: \w is Unicode, as in VS Code: one \w+ takes 'naïve' whole | Tests.scala: \w is Unicode, as in VS Code: one \w+ takes 'naïve' whole (ignored: the oniguruma engine reads `\w` as ASCII) |
+| port_tests.sysl: \w is Unicode, as in VS Code: one \w+ takes 'naïve' whole | Tests.scala: \w is Unicode, as in VS Code: one \w+ takes 'naïve' whole |
 | vscode_tests.sysl: $base: in a grammar on its own it is the grammar itself | Tests.scala: $base: in a grammar on its own it is the grammar itself |
 | port_tests.sysl: a begin group's text is escaped before it stands in an end | Tests.scala: a begin group's text is escaped before it stands in an end |
 | port_tests.sysl: a grammar with no scopeName is refused | Tests.scala: a grammar with no scopeName is refused |
@@ -214,7 +214,7 @@ The six `tests.sysl` rows below about categories (from "a string's quotes" to "c
 | tests.sysl: category_of reads the whole stack and is the category the renderer uses | Tests.scala: category_of reads the whole stack and is the category the renderer uses |
 | port_tests.sysl: category: every row of the table | Tests.scala: category: every row of the table |
 | port_tests.sysl: escape_html escapes the four and nothing else | Tests.scala: escape_html escapes the four and nothing else |
-| equivalence_tests.sysl: every corpus file but html.1 renders exactly as VS Code renders it | VsCodeParityTests.scala: every corpus file but html.1 renders exactly as VS Code renders it (ignored: the oniguruma engine reads `\w` as ASCII) |
+| equivalence_tests.sysl: every corpus file but html.1 renders exactly as VS Code renders it | VsCodeParityTests.scala: every corpus file but html.1 renders exactly as VS Code renders it |
 | vscode_tests.sysl: guards: a pair opening again where it already is, matching nothing, does not | Tests.scala: guards: a pair opening again where it already is, matching nothing, does not |
 | vscode_tests.sysl: guards: a pair that opens and closes at one place matching nothing stays open, and the line ends | Tests.scala: guards: a pair that opens and closes at one place matching nothing stays open, and the line ends |
 | equivalence_tests.sysl: html.1 differs from VS Code only in the embedded style and script bodies, which are plain | VsCodeParityTests.scala: html.1 differs from VS Code only in the embedded style and script bodies, which are plain |
