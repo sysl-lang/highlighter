@@ -233,10 +233,11 @@ The six `tests.sysl` rows below about categories (from "a string's quotes" to "c
 
 ### Not ported
 
-Seven sysl tests have no Scala counterpart, because the Scala library has nothing for them to test:
+Thirty-four sysl tests have no Scala counterpart, because the Scala library has nothing for them to test:
 
 | sysl test | why |
 |---|---|
+| sysl_grammar_tests: `sysl grammar:` x27 | they test sysl's own grammar (`test-grammars/sysl.tmLanguage.json`) against sysl's lexical rules; the Scala suite carries no sysl grammar, and the subject is the grammar rather than the tokenizer |
 | port_tests: `languages:` x3 | `Languages` (a registry that picks a grammar by a fenced block's first word) does not exist in the Scala library |
 | port_tests: `markdown:` hook | the hook composes with `sh.sysl.markdown`, a sysl package |
 | readme_tests: `README:` x3 | they run the sysl README's examples against its text |

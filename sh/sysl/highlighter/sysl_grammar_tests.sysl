@@ -1,0 +1,314 @@
+module sh.sysl.highlighter
+@tests
+
+import sysl.buf.{Buf, buf}
+import sysl.text.{Search, join, str_builder}
+
+// sysl's own grammar, `test-grammars/sysl.tmLanguage.json`, against the language's lexical rules
+// (the sysl reference's `lexical.md` and `strings.md`, and its lexer where a page is silent). Each
+// test names the scope the text must carry, or must not, for every token the text overlaps — so a
+// literal split in two, or a comment that stops early, is a failure and not a partial pass.
+
+private sysl() -> Highlighter = load("sysl")
+
+// The scope stacks of every token overlapping the first `needle` on line `n` of `code` — or the last,
+// where an earlier occurrence sits inside something else.
+private stacks_over(code: string, n: usize, needle: string, last: bool) -> Buf[string]
+    val line = sysl().tokens(code)[n]
+    var text = str_builder()
+
+    for t in line.view()
+        text.push(t.text)
+
+    val whole = text.finish()
+    val found = if last then whole.last_index_of(needle) else whole.index_of(needle)
+    val from = found.expect(s"line ${n} of the input holds '${needle}'")
+    val to = from + needle.len
+    var out: Buf[string] = buf()
+    var at: usize = 0
+
+    for t in line.view()
+        val stop = at + t.text.len
+
+        if stop > from && at < to then out.push(join(t.scopes.view(), " "))
+        at = stop
+
+    out
+end stacks_over
+
+// Every token of `needle` carries `scope`.
+private is(code: string, n: usize, needle: string, scope: string, last: bool = false)
+    for st in stacks_over(code, n, needle, last).view()
+        assert(st.contains(scope), s"'${needle}' should be ${scope}, but a token of it is: ${st}")
+
+// No token of `needle` carries `scope`.
+private isnt(code: string, n: usize, needle: string, scope: string, last: bool = false)
+    for st in stacks_over(code, n, needle, last).view()
+        assert(!st.contains(scope), s"'${needle}' should not be ${scope}, but a token of it is: ${st}")
+
+@test("sysl grammar: loads with every pattern compiled")
+sysl_loads()
+    val h = sysl()
+
+    assert(h.load_warnings().len() == 0, join(h.load_warnings().view(), "; "))
+
+// --- comments ---
+
+@test("sysl grammar: a block comment nested two deep ends at its own */, and code follows")
+sysl_nested_comment()
+    val code = "/* a /* b /* c */ d */ e */ val x = 1"
+
+    is(code, 0, " d ", "comment.block.sysl")
+    is(code, 0, " e ", "comment.block.sysl")
+    isnt(code, 0, "val", "comment")
+    is(code, 0, "val", "keyword.declaration.sysl")
+    is(code, 0, "1", "constant.numeric.integer.sysl")
+
+@test("sysl grammar: a nested block comment spans lines, and the line after it is code")
+sysl_nested_comment_lines()
+    val code = "/* outer\n   /* inner */\n   still outer */\nval y = 2"
+
+    is(code, 1, "inner", "comment.block.sysl")
+    is(code, 2, "still outer", "comment.block.sysl")
+    isnt(code, 3, "val", "comment")
+    is(code, 3, "val", "keyword.declaration.sysl")
+
+@test("sysl grammar: a block comment inside a line leaves the rest of the line code")
+sysl_inline_comment()
+    val code = "var x = 1 /* note */ + f(2)"
+
+    is(code, 0, "note", "comment.block.sysl")
+    isnt(code, 0, "f", "comment")
+    is(code, 0, "f", "entity.name.function.call.sysl")
+
+@test("sysl grammar: a doc comment, its tags at the head of a line, and @ in prose")
+sysl_doc_comment()
+    val code = "/** Sums, as @param is not here.\n * @param xs the first\n * @return the sum\n */\nadd(xs: int) -> int = xs"
+
+    is(code, 0, "Sums", "comment.block.documentation.sysl")
+    isnt(code, 0, "@param", "storage.type.class.doc.sysl")
+    is(code, 1, "@param", "storage.type.class.doc.sysl")
+    is(code, 1, "xs", "variable.parameter.doc.sysl")
+    is(code, 2, "@return", "storage.type.class.doc.sysl")
+    isnt(code, 4, "add", "comment")
+    is(code, 4, "add", "entity.name.function.sysl")
+
+@test("sysl grammar: /**/ is an empty block comment, not a doc comment")
+sysl_empty_block_comment()
+    val code = "/**/ val z = 0"
+
+    is(code, 0, "/**/", "comment.block.sysl")
+    isnt(code, 0, "/**/", "documentation")
+    is(code, 0, "val", "keyword.declaration.sysl")
+
+// --- strings and text blocks ---
+
+@test("sysl grammar: a text block holds a lone \" and an escaped \\\"\"\", and ends at \"\"\"")
+sysl_text_block()
+    val code = "val t = \"\"\"\n    he said \"hi\" \\\"\"\" still\n    joined\\\n    \"\"\"\nval after = 1"
+
+    is(code, 1, "he said \"hi\"", "string.quoted.triple.sysl")
+    is(code, 1, "\\\"", "constant.character.escape.sysl")
+    is(code, 1, " still", "string.quoted.triple.sysl")
+    is(code, 2, "\\", "constant.character.escape.line-continuation.sysl")
+    is(code, 3, "\"\"\"", "punctuation.definition.string.end.sysl")
+    isnt(code, 4, "val", "string")
+    is(code, 4, "val", "keyword.declaration.sysl")
+
+@test("sysl grammar: an s text block reads ${expr}, $name and $$")
+sysl_text_block_interpolation()
+    val code = "s\"\"\"\n    total ${a + g(b)} for $name at $$5\n    \"\"\""
+
+    is(code, 0, "s", "keyword.other.string-prefix.sysl")
+    is(code, 1, "total", "string.quoted.triple.interpolated.sysl")
+    is(code, 1, "${", "punctuation.section.embedded.begin.sysl")
+    is(code, 1, "g", "entity.name.function.call.sysl")
+    is(code, 1, "g", "meta.embedded.expression.sysl")
+    is(code, 1, "name", "variable.other.interpolated.sysl")
+    is(code, 1, "$$", "constant.character.escape.dollar.sysl")
+
+@test("sysl grammar: a raw text block decodes nothing and reads no holes")
+sysl_raw_text_block()
+    val code = "raw\"\"\"\n    let re = \"\\d+\"; ${x}\n    \"\"\"\nval v = 1"
+
+    is(code, 0, "raw", "keyword.other.string-prefix.sysl")
+    is(code, 1, "\\d+", "string.quoted.triple.raw.sysl")
+    isnt(code, 1, "\\d", "escape")
+    isnt(code, 1, "${x}", "meta.embedded")
+    is(code, 3, "val", "keyword.declaration.sysl")
+
+@test("sysl grammar: a one-line raw string reads no holes and no escapes")
+sysl_raw_string()
+    val code = "raw\"a\\n${b}\" + 1"
+
+    is(code, 0, "a\\n${b}", "string.quoted.double.raw.sysl")
+    isnt(code, 0, "\\n", "escape")
+    isnt(code, 0, "${b}", "meta.embedded")
+
+@test("sysl grammar: a C string and a plain string read no holes")
+sysl_c_string_no_holes()
+    val code = "f(c\"${x}\", \"$y\")"
+
+    is(code, 0, "c", "keyword.other.string-prefix.sysl")
+    isnt(code, 0, "${x}", "meta.embedded")
+    is(code, 0, "${x}", "string.quoted.double.sysl")
+    isnt(code, 0, "$y", "meta.embedded")
+
+@test("sysl grammar: a printf specifier follows a hole in an f-string only")
+sysl_format_specifier()
+    val code = "f\"${n}%08.2f|$m%-5s\" + s\"${n}%d\""
+
+    is(code, 0, "%08.2f", "constant.other.placeholder.sysl")
+    is(code, 0, "%-5s", "constant.other.placeholder.sysl")
+    isnt(code, 0, "%d", "placeholder")
+    is(code, 0, "%d", "string.quoted.double.interpolated.sysl")
+
+@test("sysl grammar: the escape table is C's nine and \\u{…}; \\e is refused")
+sysl_escapes()
+    val code = "\"\\t\\u{1F600}\\e\\a\" + '\\n' + '\\u{7f}'"
+
+    is(code, 0, "\\t", "constant.character.escape.sysl")
+    is(code, 0, "\\u{1F600}", "constant.character.escape.sysl")
+    is(code, 0, "\\e", "invalid.illegal.escape.sysl")
+    is(code, 0, "\\a", "invalid.illegal.escape.sysl")
+    is(code, 0, "\\n", "constant.character.escape.sysl")
+    is(code, 0, "'\\u{7f}'", "string.quoted.single.sysl")
+    is(code, 0, "\\u{7f}", "constant.character.escape.sysl")
+
+@test("sysl grammar: a loop label is a label, and a char literal beside it is a char")
+sysl_label()
+    val code = "if b == 'a' then break 'outer"
+
+    is(code, 0, "'a'", "string.quoted.single.sysl")
+    is(code, 0, "'outer", "entity.name.label.sysl")
+    isnt(code, 0, "'outer", "string")
+
+// --- numbers ---
+
+@test("sysl grammar: a suffix on a hex literal, any width and fixed point")
+sysl_hex_suffix()
+    val code = "x = 0xFFu12 + 0x7Fi8q7 + 0xFF_FFusize"
+
+    is(code, 0, "0xFFu12", "constant.numeric.hex.sysl")
+    is(code, 0, "0x7Fi8q7", "constant.numeric.hex.sysl")
+    is(code, 0, "0xFF_FFusize", "constant.numeric.hex.sysl")
+
+@test("sysl grammar: prefixes in either case, digit separators, any-width suffixes")
+sysl_prefix_case()
+    val code = "x = 0XFFu24 + 0B1010_1010u12 + 0O755i24 + 1_000u24 + 42u16"
+
+    is(code, 0, "0XFFu24", "constant.numeric.hex.sysl")
+    is(code, 0, "0B1010_1010u12", "constant.numeric.binary.sysl")
+    is(code, 0, "0O755i24", "constant.numeric.octal.sysl")
+    is(code, 0, "1_000u24", "constant.numeric.integer.sysl")
+    is(code, 0, "42u16", "constant.numeric.integer.sysl")
+
+@test("sysl grammar: float suffixes f16, bf16, f128, and fixed point on a fraction")
+sysl_float_suffix()
+    val code = "x = 1.5bf16 + 3f16 + 2.5e3f128 + 0.6i32q31 + 1i32q16"
+
+    is(code, 0, "1.5bf16", "constant.numeric.float.sysl")
+    is(code, 0, "3f16", "constant.numeric.float.sysl")
+    is(code, 0, "2.5e3f128", "constant.numeric.float.sysl")
+    is(code, 0, "0.6i32q31", "constant.numeric.float.sysl")
+    is(code, 0, "1i32q16", "constant.numeric.integer.sysl")
+
+@test("sysl grammar: a hex float needs its p exponent, and 0x1.b is an integer and a field")
+sysl_hex_float()
+    val code = "x = 0x1.b + 0x1.8p3 + 0x1p-2f32"
+
+    is(code, 0, "0x1", "constant.numeric.hex.sysl")
+    isnt(code, 0, ".b", "numeric")
+    is(code, 0, "0x1.8p3", "constant.numeric.float.hex.sysl")
+    is(code, 0, "0x1p-2f32", "constant.numeric.float.hex.sysl")
+
+@test("sysl grammar: a range and a method call on an integer are not fractions")
+sysl_not_fraction()
+    val code = "for i in 0..<n do x = 1.max(2) + 0x10i24"
+
+    is(code, 0, "0", "constant.numeric.integer.sysl")
+    isnt(code, 0, "..<", "numeric")
+    isnt(code, 0, ".max", "numeric")
+    is(code, 0, "0x10i24", "constant.numeric.hex.sysl")
+
+// --- operators ---
+
+@test("sysl grammar: := and the yielding compound assignments are one token each")
+sysl_yield_assignments()
+    val code = "if (n := next()) > 0 then t +:= n\nm <<:= 2\np &:= *q\nw >>:= 1"
+
+    is(code, 0, ":=", "keyword.operator.assignment.yield.sysl")
+    is(code, 0, "+:=", "keyword.operator.assignment.yield.sysl")
+    is(code, 1, "<<:=", "keyword.operator.assignment.yield.sysl")
+    is(code, 2, "&:=", "keyword.operator.assignment.yield.sysl")
+    isnt(code, 2, "&:=", "sigil")
+    is(code, 2, "*", "keyword.operator.sigil.sysl")
+    is(code, 3, ">>:=", "keyword.operator.assignment.yield.sysl")
+
+// --- words ---
+
+@test("sysl grammar: end closes a block only standing alone or naming it")
+sysl_end_soft()
+    val code = "end = 3\nend\nend highlight\nend `Grid Cell`\nend.max()"
+
+    isnt(code, 0, "end", "keyword")
+    is(code, 1, "end", "keyword.declaration.sysl")
+    is(code, 2, "highlight", "entity.name.type.sysl")
+    is(code, 3, "`Grid Cell`", "entity.name.type.sysl")
+    isnt(code, 4, "end", "keyword")
+
+@test("sysl grammar: a control word at a line's head is not a declaration")
+sysl_control_not_declaration()
+    val code = "while (x > 0)\nmatch (a, b)\nif (ok)"
+
+    is(code, 0, "while", "keyword.control.sysl")
+    isnt(code, 0, "while", "entity.name.function")
+    is(code, 1, "match", "keyword.control.sysl")
+    is(code, 2, "if", "keyword.control.sysl")
+
+@test("sysl grammar: a declaration's modifiers, private[m], const and an extern's symbol")
+sysl_declaration_modifiers()
+    val code = "private[m] const twice(x: int) -> int = x * 2\nprivate extern \"__errno_location\" errno_location() -> *i32"
+
+    is(code, 0, "private", "storage.modifier.sysl")
+    is(code, 0, "const", "keyword.declaration.sysl")
+    is(code, 0, "twice", "entity.name.function.sysl")
+    is(code, 1, "\"__errno_location\"", "string.quoted.double.sysl")
+    is(code, 1, "errno_location", "entity.name.function.sysl", last = true)
+
+@test("sysl grammar: set opens a setter only at a member's head")
+sysl_set_soft()
+    val code = "    set count(v)\nvar set = Cell(3)"
+
+    is(code, 0, "set", "storage.modifier.sysl")
+    is(code, 0, "count", "entity.name.function.sysl")
+    isnt(code, 1, "set", "storage.modifier")
+
+@test("sysl grammar: async before a declaration and await before an operand")
+sysl_async_await()
+    val code = "async fetch(u: string) -> int\nval r = await task\nval await = 1"
+
+    is(code, 0, "async", "storage.modifier.sysl")
+    is(code, 0, "fetch", "entity.name.function.sysl")
+    is(code, 1, "await", "keyword.control.sysl")
+    isnt(code, 2, "await", "keyword")
+
+@test("sysl grammar: c is a keyword only before const or type")
+sysl_c_block()
+    val code = "c const\nc type\nval c = 1"
+
+    is(code, 0, "c", "keyword.declaration.sysl")
+    is(code, 0, "const", "keyword.declaration.sysl")
+    is(code, 1, "c", "keyword.declaration.sysl")
+    isnt(code, 2, "c ", "keyword.declaration.sysl")
+
+@test("sysl grammar: f16, bf16, i128 and the fixed-point types are primitives; f1 is a name")
+sysl_primitive_types()
+    val code = "val a: f16 = b as bf16 + i128(c) + q15(d) + i32q16(e) + f1"
+
+    is(code, 0, "f16", "support.type.primitive.sysl")
+    is(code, 0, "bf16", "support.type.primitive.sysl")
+    is(code, 0, "i128", "support.type.primitive.sysl")
+    is(code, 0, "q15", "support.type.primitive.sysl")
+    is(code, 0, "i32q16", "support.type.primitive.sysl")
+    isnt(code, 0, "f1", "support.type", last = true)

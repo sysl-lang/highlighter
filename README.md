@@ -143,16 +143,17 @@ unresolved as the Scala port left them. Every difference since is one of the cha
 
 ## The tests
 
-208, all against something outside the code under test:
+236, all against something outside the code under test:
 
 | file | | |
 |---|---|---|
-| `tests.sysl` | 43 | the Scala `Tests` suite, test for test |
+| `tests.sysl` | 44 | the Scala `Tests` suite, test for test |
 | `grammar_tests.sysl` | 111 | the Scala `RealWorldGrammarTests`, test for test, over the vendored grammars |
 | `vscode_tests.sysl` | 21 | each VS Code rule above, every exact expectation confirmed against vscode-textmate |
 | `port_tests.sysl` | 27 | `\b`/`\w` (`síif`, `realíssimo`, `naïve`), back-references, character boundaries, the error paths, the renderer, `Languages` and the Markdown composition |
 | `equivalence_tests.sysl` | 3 | the corpus against VS Code |
 | `readme_tests.sysl` | 3 | this README's examples, as written here, and what they print |
+| `sysl_grammar_tests.sysl` | 27 | sysl's own grammar against the sysl reference's lexical rules: nested comments, doc tags, text blocks, holes, escapes, number suffixes, `:=`, the contextual words |
 
 **No Scala test's expectation changed.** All 148 pass as written; the loading tests are stronger here,
 asserting that no pattern of any of the thirteen grammars is refused. `PARITY.md` maps every Scala
