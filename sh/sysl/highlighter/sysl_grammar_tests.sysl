@@ -8,6 +8,9 @@ import sysl.text.{Search, join, str_builder}
 // (the sysl reference's `lexical.md` and `strings.md`, and its lexer where a page is silent). Each
 // test names the scope the text must carry, or must not, for every token the text overlaps — so a
 // literal split in two, or a comment that stops early, is a failure and not a partial pass.
+//
+// The fixture is a byte-identical copy of sysl's `docs/grammars/sysl.tmLanguage.json` at sysl commit
+// faf3b48a; the grammar is changed there and copied here.
 
 private sysl() -> Highlighter = load("sysl")
 

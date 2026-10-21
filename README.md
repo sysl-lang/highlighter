@@ -191,6 +191,12 @@ the API — a program brings its own grammars.
 | `xml.tmLanguage.json` | `bb51c7b202f20254772c88f86889e0dbcdc734e045b950fe25c0a23b591203d7` |
 | `yaml.tmLanguage.json` | `f350b4e6b7f2a3f5153ebad52918a9851d9fa2bb5245cbb4a03fb85cda1b2b2e` |
 
+A fourteenth, `sysl.tmLanguage.json`, is sysl's own grammar, the subject of `sysl_grammar_tests.sysl`.
+It is a byte-identical copy of `docs/grammars/sysl.tmLanguage.json` at sysl commit
+[`faf3b48a`](https://github.com/sysl-lang/sysl/commit/faf3b48a1a50cd8a3a184c8d6db00b876d2c37b0)
+(SHA-256 `11a795c84cbb5b789e9e25096e9404995f4b3d692f1a1f43b05c00bdc4675103`); a change to it is made
+there and copied here.
+
 ## Licence
 
 ISC, as `LICENSE` says.
