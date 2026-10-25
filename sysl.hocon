@@ -3,13 +3,13 @@
 // This is the block a consumer writes to reach it:
 //
 //     dependencies {
-//       highlighter { git = "github.com/sysl-lang/highlighter", version = "0.1.3" }
+//       highlighter { git = "github.com/sysl-lang/highlighter", version = "0.1.4" }
 //     }
 //
 // The module a program imports is `sh.sysl.highlighter`.
 package {
   name    = "highlighter"
-  version = "0.1.3"
+  version = "0.1.4"
 
   // The compiler this was written and tested against.
   sysl = "0.6.0"
