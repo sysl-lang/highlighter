@@ -3,7 +3,8 @@ module sh.sysl.highlighter
 
 import sh.sysl.markdown.{commonmark_html, parse, to_html_with}
 import sysl.fs.read_bytes
-import sysl.text.{Search, from_utf8}
+import sysl.buf.{Buf, buf}
+import sysl.text.{Search, from_utf8, join}
 
 // The README's examples, as written there, and what it says they print.
 
@@ -32,13 +33,34 @@ end render
 readme_opening()
     val here = __FILE__
     val root = here[0..<here.last_index_of("/sh/sysl/highlighter/").unwrap()]
-    val r = readme_main(s"${root}/test-grammars/rust.tmLanguage.json")
+    val r = readme_main(s"${root}/grammars/rust.tmLanguage.json")
     val a = r.0
     val b = r.1
 
     assert(a.starts_with("<span class=\"hl-keyword\">fn</span> <span class=\"hl-function\">main</span><span class=\"hl-punctuation\">()</span>"), a)
     assert(b.starts_with("<span style=\"color:#c678dd\">let</span> <span style=\"color:#e06c75\">x</span> "), b)
 end readme_opening
+
+// *A line at a time*, with each print collected rather than written.
+private readme_lines() -> string
+    val h = from_json(grammar_for_extension("rs").expect("carried")).expect("the grammar loads")
+    var state = h.initial_state()
+    var out: Buf[string] = buf()
+
+    for line in ["fn main() {", "    /* a comment", "    still */ let x = 1;", "}"]
+        val r = h.tokenize_line(line, state).expect("one line, this grammar's state")
+
+        for t in r.tokens.view()
+            out.push(s"${t.text}|${h.category_of(t)}")
+
+        state = r.state
+
+    join(out.view(), ";")
+end readme_lines
+
+@test("README: a line at a time, a comment spanning two lines is a comment on both")
+readme_line_at_a_time()
+    assert_eq(readme_lines(), "fn|keyword; |;main|function;()|punctuation; |;{|punctuation;    |;/* a comment|comment;    still */|comment; |;let|keyword; |;x|variable; |;=|keyword; |;1|number;;|punctuation;}|punctuation")
 
 @test("README: the Markdown composition highlights the scala block")
 readme_markdown()

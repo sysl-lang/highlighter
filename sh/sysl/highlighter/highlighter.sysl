@@ -16,6 +16,13 @@ enum RenderMode
 /** `Classes` with the `hl-` prefix — the default. */
 classes() -> RenderMode = Classes("hl-")
 
+/** One line's tokens, adjacent ones with the same scopes merged, and the state the next line starts
+ * from — what `Highlighter.tokenize_line` answers.
+ */
+struct LineTokens
+    tokens: Buf[Token]
+    state: LineState
+
 /** A grammar ready to highlight with, and how it writes HTML. */
 struct Highlighter
     private tk: Tokenizer
@@ -56,6 +63,33 @@ struct Highlighter
 
         out
     end tokens
+
+    /** The state before a document's first line — the only one under which `\A` holds. */
+    initial_state(self) -> LineState = self.tk.initial()
+
+    /** One line's tokens and the state after it, for an editor that tokenizes only the lines it
+     * shows. `line` holds no newline; `state` is `initial_state()` for a document's first line and
+     * the state the line above answered otherwise. Fed every line of a text in order, it answers
+     * exactly what `tokens` answers for that text.
+     *
+     * **Only the first `limit` bytes are matched**, backed off to a character's start: the rest of
+     * the line is one token under the grammar's scope alone, and the pairs open where matching
+     * stopped are open on the next line. A grammar's search can cost far more than the line's length,
+     * so a long line — a minified file, a megabyte of JSON on one line — would otherwise stall the
+     * editor. The default is VS Code's `editor.maxTokenizationLineLength`, 20000.
+     *
+     * Refused: a `line` holding a newline, and a `state` another grammar made.
+     */
+    tokenize_line(self, line: string, state: LineState, limit: usize = 20000) -> Result[LineTokens, string]
+        if line.contains("\n") then return Err("a line holds no newline: split the text at each '\\n' and pass the lines one by one")
+
+        if state.grammar() != self.tk.scope_name
+            return Err(s"this state was made by the grammar '${state.grammar()}', not by '${self.tk.scope_name}'")
+
+        val r = self.tk.next_line(line, state, limit)
+
+        Ok(LineTokens(merge(r.0), r.1))
+    end tokenize_line
 
     /** `category(scope)`, as a method beside `tokens`. */
     category(self, scope: string) -> string = category(scope)

@@ -37,7 +37,10 @@ private struct Frame
     // The rules in force inside, and the pair's identity.
     key: string
 
+    // The `end`, and the source it was compiled from, with any `\N` already resolved — which is what
+    // tells two states apart where one rule's `end` was made from two different `begin` matches.
     end: Option[&Regex]
+    end_source: string
     end_captures: Option[Buf[Capture]]
     end_last: bool
 
@@ -53,6 +56,41 @@ private struct Frame
     // The `begin` match ran to the end of its line.
     eol: bool
 end Frame
+
+/** Where the tokenizer stands between two lines: the `begin`/`end` pairs still open, outermost
+ * first, each with its `end` and scopes and whether `\G` holds at the next line's start — what
+ * vscode-textmate calls a `StateStack`. `Highlighter.initial_state()` is the state before a
+ * document's first line, and `tokenize_line` answers the state after each line.
+ *
+ * A state is never changed once made, so copying one is copying a reference to it. Two states are
+ * `==` when every line goes on from them alike: an editor that re-tokenizes an edited line and finds
+ * its end state equal to the old one can stop there, since no line below it changes.
+ */
+struct LineState
+    private frames: Buf[Frame]
+
+    // The document's first line is next, where `\A` holds.
+    private first: bool
+
+    // The grammar's own scope, which tells a state from another grammar's.
+    private[highlighter] grammar(self) -> string = self.frames[0].scopes[0]
+
+    // A stack to tokenize with, the state's own left as it is.
+    private stack(self) -> Buf[Frame]
+        var out: Buf[Frame] = buf()
+
+        out.extend(self.frames.view())
+        out
+end LineState
+
+impl Eq for LineState
+    eq(self, other: LineState) -> bool
+        if self.first != other.first || self.frames.len() != other.frames.len() then return false
+
+        for i in 0..<self.frames.len()
+            if !same_frame(self.frames[i], other.frames[i]) then return false
+
+        true
 
 // A position no search starts at, for "nowhere".
 private no_pos() -> usize = ~usize(0)
@@ -87,32 +125,63 @@ private[highlighter] struct Tokenizer
 
     tokenize(self, text: string) -> Buf[Buf[Token]]
         var out: Buf[Buf[Token]] = buf()
-        var stack: Buf[Frame] = buf()
-        var root: Buf[string] = buf()
-
-        root.push(self.scope_name)
-        stack.push(Frame("$top", None, None, false, root, root, no_pos(), no_pos(), false))
-
+        val stack = self.start()
         var first = true
 
         for line in split(text, "\n")
-            // What a pair remembers of the line it was entered on means nothing on this one.
-            for i in 0..<stack.len()
-                var f = stack[i]
-
-                f.enter = no_pos()
-                f.anchor = no_pos()
-                stack[i] = f
-
-            val anchor = if stack[stack.len() - 1].eol then 0 else no_pos()
-            var p = Producer(buf(), 0)
-
-            self.run(line + "\n", stack, 0, anchor, first, &p)
-            out.push(clip(p.tokens, line.len))
+            out.push(self.line(line, stack, first, no_pos()))
             first = false
 
         out
     end tokenize
+
+    private[highlighter] initial(self) -> LineState = LineState(self.start(), true)
+
+    // One line's tokens and the state after it, `state` left as it was.
+    private[highlighter] next_line(self, text: string, state: LineState, limit: usize) -> (Buf[Token], LineState)
+        val stack = state.stack()
+        val tokens = self.line(text, stack, state.first, limit)
+
+        (tokens, LineState(stack, false))
+
+    // The stack a document starts under: the grammar itself, and no pair open.
+    private start(self) -> Buf[Frame]
+        var stack: Buf[Frame] = buf()
+        var root: Buf[string] = buf()
+
+        root.push(self.scope_name)
+        stack.push(Frame("$top", None, "", None, false, root, root, no_pos(), no_pos(), false))
+        stack
+
+    // One line's tokens, `text` holding no newline, under `stack`, which is left as the line leaves
+    // it. `first` says this is the document's first line. Only the first `limit` bytes are matched
+    // (backed off to a character's start); the rest of the line is one token under the grammar's
+    // scope alone, and the pairs open where matching stopped stay open.
+    private line(self, text: string, stack: Buf[Frame], first: bool, limit: usize) -> Buf[Token]
+        val anchor = if stack[stack.len() - 1].eol then 0 else no_pos()
+        var p = Producer(buf(), 0)
+        val cut = text.len > limit
+
+        if cut
+            val at = char_start(text, limit)
+
+            self.run(text[0..<at], stack, 0, anchor, first, &p)
+            p.tokens.push(Token(text[at..], stack[0].scopes))
+        else
+            self.run(text + "\n", stack, 0, anchor, first, &p)
+
+        // What a pair remembers of the line it was entered on means nothing on the next one; nor does
+        // a `begin` that ran to the end of a line that was cut short.
+        for i in 0..<stack.len()
+            var f = stack[i]
+
+            f.enter = no_pos()
+            f.anchor = no_pos()
+            if cut then f.eol = false
+            stack[i] = f
+
+        if cut then p.tokens else clip(p.tokens, text.len)
+    end line
 
     // Tokens from `pos` to the end of `line`, under `stack`, which is left as the line leaves it.
     // `at_start` says the document's first line is being matched and nothing on it has been yet.
@@ -173,11 +242,12 @@ private[highlighter] struct Tokenizer
                         out.produce(line, scopes, m.end())
 
                         val key = rule.inner_key.unwrap()
-                        val end = if rule.end_refers then self.end_for(rule.end_source.unwrap(), m) else rule.end_regex
+                        val end_source = if rule.end_refers then resolve_back_references(rule.end_source.unwrap(), m) else rule.end_source.unwrap_or("")
+                        val end = if rule.end_refers then self.end_for(end_source) else rule.end_regex
                         val content = with_names(scopes, named(rule.content_name, m), None)
                         val again = !advanced && reopens(stack, key, pos)
 
-                        stack.push(Frame(key, end, rule.end_captures, rule.end_last, scopes, content, pos, anchor, m.end() == line.len))
+                        stack.push(Frame(key, end, end_source, rule.end_captures, rule.end_last, scopes, content, pos, anchor, m.end() == line.len))
                         anchor = m.end()
 
                         // The same pair opened again where it already was, matching nothing: it
@@ -272,7 +342,7 @@ private[highlighter] struct Tokenizer
                     for f in stack.view()
                         inner.push(f)
 
-                    inner.push(Frame(capture_key(c), None, None, false, scopes, content, gs, no_pos(), false))
+                    inner.push(Frame(capture_key(c), None, "", None, false, scopes, content, gs, no_pos(), false))
                     self.run(line[0..<ge], inner, gs, no_pos(), first && gs == 0, out)
                 None ->
                     named(c.name, m) match
@@ -321,11 +391,10 @@ private[highlighter] struct Tokenizer
         s
     end scan_for
 
-    // The `end` of a rule whose `end` names its `begin` match's groups: each `\N` replaced by the
-    // text group N took, escaped, as vscode-textmate does. Compiled once per distinct result.
-    private end_for(self, src: string, m: Match) -> Option[&Regex]
-        val resolved = resolve_back_references(src, m)
-
+    // The `end` of a rule whose `end` names its `begin` match's groups, from its source with each `\N`
+    // already replaced by the text group N took, escaped, as vscode-textmate does. Compiled once per
+    // distinct result.
+    private end_for(self, resolved: string) -> Option[&Regex]
         self.ends.get(resolved) match
             Some(r) -> return r
             None -> ()
@@ -407,6 +476,21 @@ private clip(tokens: Buf[Token], n: usize) -> Buf[Token]
 
     out
 end clip
+
+// `n`, or the start of the character `n` falls inside — a UTF-8 continuation byte is `10xxxxxx`.
+private char_start(s: string, n: usize) -> usize
+    val b = s.bytes
+    var i = n
+
+    while i > 0 && b[i] & 0xC0 == 0x80
+        i -= 1
+
+    i
+
+// Two open pairs that go on alike from a line's start: the same rules inside, the same `end`, the
+// same scopes, and the same `\G` at the next line's start. Where each was entered is forgotten by then.
+private same_frame(a: Frame, b: Frame) -> bool
+    a.key == b.key && a.end_source == b.end_source && a.end_last == b.end_last && a.eol == b.eol && same_scopes(a.scopes, b.scopes) && same_scopes(a.content, b.content)
 
 // Every rule of `rules` but the `$self` markers.
 private push_live(out: Buf[Rule], rules: Buf[Rule])

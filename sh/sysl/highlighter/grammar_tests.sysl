@@ -5,7 +5,7 @@ import sysl.fs.read_bytes
 import sysl.text.{Search, from_utf8, join, replace_all}
 
 // The Scala highlighter's `RealWorldGrammarTests`, test for test: VS Code's own TextMate grammars,
-// carried in `test-grammars/`, and the constructs somebody writing a page of that language types.
+// carried in `grammars/`, and the constructs somebody writing a page of that language types.
 // An assertion names the category a token must render as and, where it matters which token, the
 // exact text inside the span.
 
@@ -13,7 +13,7 @@ private grammar_file(name: string) -> string
     val here = __FILE__
     val cut = here.last_index_of("/sh/sysl/highlighter/").expect("this file sits under sh/sysl/highlighter")
 
-    s"${here[0..<cut]}/test-grammars/${name}.tmLanguage.json"
+    s"${here[0..<cut]}/grammars/${name}.tmLanguage.json"
 
 private[highlighter] grammar_text(name: string) -> string = from_utf8(read_bytes(grammar_file(name)).expect(s"${name} reads")).expect(s"${name} is UTF-8")
 

@@ -1,0 +1,56 @@
+module sh.sysl.highlighter
+@tests
+
+import sysl.text.join
+
+// The grammars carried inside the package, against the files in `grammars/` they were embedded from.
+
+private carried() -> []string = ["bash", "css", "go", "html", "javascript", "json", "python", "rust", "sysl", "tsx", "typescript", "xml", "yaml"]
+
+@test("bundled: every carried grammar is its file in grammars/, byte for byte, and loads with no warning")
+bundled_all()
+    for lang in carried()
+        val text = grammar_for_language(lang).expect(lang)
+
+        assert(text == grammar_text(lang), lang)
+
+        val h = from_json(text).expect(lang)
+
+        assert(h.load_warnings().len() == 0, s"${lang}: ${join(h.load_warnings().view(), "; ")}")
+
+@test("bundled: a language's other names and any case reach the same grammar")
+bundled_aliases()
+    assert(grammar_for_language("PYTHON") == grammar_for_language("py"))
+    assert(grammar_for_language("Shell") == grammar_for_language("bash"))
+    assert(grammar_for_language("zsh") == grammar_for_language("bash"))
+    assert(grammar_for_language("js") == grammar_for_language("javascript"))
+    assert(grammar_for_language("yml") == grammar_for_language("yaml"))
+    assert(grammar_for_language("ts") == grammar_for_language("typescript"))
+
+@test("bundled: an extension reaches its language's grammar")
+bundled_extensions()
+    val cases = [("py", "python"), ("pyi", "python"), ("rs", "rust"), ("ts", "typescript"), ("mts", "typescript"), ("tsx", "tsx"), ("js", "javascript"), ("mjs", "javascript"), ("jsx", "javascript"), ("json", "json"), ("jsonc", "json"), ("go", "go"), ("css", "css"), ("html", "html"), ("HTM", "html"), ("xml", "xml"), ("svg", "xml"), ("yaml", "yaml"), ("yml", "yaml"), ("sh", "bash"), ("zsh", "bash"), ("sysl", "sysl")]
+
+    for c in cases
+        assert(grammar_for_extension(c.0) == grammar_for_language(c.1), c.0)
+        assert(grammar_for_extension(c.0).is_some(), c.0)
+
+@test("bundled: a language or extension the package carries no grammar for is None")
+bundled_absent()
+    // `grammars/scala.tmLanguage.json` is a cut-down fixture of the Scala suite's, not Scala's
+    // grammar, so it is not offered.
+    for name in ["scala", "c", "", "pythonx", "txt", ".py"]
+        assert(grammar_for_language(name).is_none(), name)
+        assert(grammar_for_extension(name).is_none(), name)
+
+    // A language's name is not an extension.
+    assert(grammar_for_extension("python").is_none())
+    assert(grammar_for_extension("typescript").is_none())
+
+@test("bundled: a carried grammar drives tokenize_line")
+bundled_tokenize_line()
+    val h = from_json(grammar_for_extension("py").expect("python")).expect("loads")
+    val ts = h.tokenize_line("def f(): pass", h.initial_state()).expect("tokenizes").tokens
+
+    assert_eq(ts[0].text, "def")
+    assert_eq(h.category_of(ts[0]), "keyword")

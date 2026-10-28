@@ -1,0 +1,54 @@
+module sh.sysl.highlighter
+
+import sysl.text.{from_utf8, to_lower}
+
+// The grammars in `grammars/`, carried inside a program that asks for one: each is embedded while
+// compiling, so a program finds its grammars without a file beside it. Only the grammars a program
+// can reach are laid down.
+
+/** The `.tmLanguage.json` text of a grammar this package carries, by language name — `bash` (or
+ * `shell`, `sh`, `zsh`), `css`, `go`, `html`, `javascript` (`js`, `jsx`), `json`, `python` (`py`),
+ * `rust` (`rs`), `sysl`, `tsx`, `typescript` (`ts`), `xml` or `yaml` (`yml`) — in any case. `None`
+ * for any other name. Hand it to `from_json`.
+ */
+grammar_for_language(name: string) -> Option[string]
+    val bytes = to_lower(name) match
+        "bash" | "shell" | "sh" | "zsh" -> embed("../../../grammars/bash.tmLanguage.json")
+        "css" -> embed("../../../grammars/css.tmLanguage.json")
+        "go" -> embed("../../../grammars/go.tmLanguage.json")
+        "html" -> embed("../../../grammars/html.tmLanguage.json")
+        "javascript" | "js" | "jsx" -> embed("../../../grammars/javascript.tmLanguage.json")
+        "json" -> embed("../../../grammars/json.tmLanguage.json")
+        "python" | "py" -> embed("../../../grammars/python.tmLanguage.json")
+        "rust" | "rs" -> embed("../../../grammars/rust.tmLanguage.json")
+        "sysl" -> embed("../../../grammars/sysl.tmLanguage.json")
+        "tsx" -> embed("../../../grammars/tsx.tmLanguage.json")
+        "typescript" | "ts" -> embed("../../../grammars/typescript.tmLanguage.json")
+        "xml" -> embed("../../../grammars/xml.tmLanguage.json")
+        "yaml" | "yml" -> embed("../../../grammars/yaml.tmLanguage.json")
+        _ -> return None
+
+    from_utf8(bytes).ok()
+end grammar_for_language
+
+/** The `.tmLanguage.json` text of the grammar this package carries for a file extension, without
+ * its dot and in any case — `py`, `rs`, `ts`, `yml`, `htm`, `svg`… — or `None` where it carries
+ * none.
+ */
+grammar_for_extension(ext: string) -> Option[string] = grammar_for_language(language_of_extension(ext))
+
+// The language name an extension is filed under, or the extension itself.
+private language_of_extension(ext: string) -> string
+    to_lower(ext) match
+        "bash" | "sh" | "zsh" | "ksh" -> "bash"
+        "htm" | "xhtml" -> "html"
+        "mjs" | "cjs" -> "javascript"
+        "pyi" | "pyw" -> "python"
+        "mts" | "cts" -> "typescript"
+        "svg" | "xsd" | "xsl" | "xslt" | "plist" -> "xml"
+        "jsonc" -> "json"
+
+        // Language names, which no file ends in.
+        "javascript" | "python" | "rust" | "typescript" | "shell" -> ""
+        e -> e
+end language_of_extension

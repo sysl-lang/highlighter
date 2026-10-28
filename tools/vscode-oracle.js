@@ -4,9 +4,9 @@
 // The two packages are VS Code's own, installed anywhere outside this tree:
 //
 //   npm install --ignore-scripts vscode-textmate@9 vscode-oniguruma@2
-//   node tools/vscode-oracle.js <that node_modules> test-grammars equivalence equivalence
+//   node tools/vscode-oracle.js <that node_modules> grammars equivalence equivalence
 //
-// Each corpus file is `<language>.<n>.txt`, highlighted with `test-grammars/<language>.tmLanguage.json`
+// Each corpus file is `<language>.<n>.txt`, highlighted with `grammars/<language>.tmLanguage.json`
 // and every other grammar there available to its includes, which is how HTML's `<style>` and
 // `<script>` reach the CSS and JavaScript grammars.
 const path = require('path');

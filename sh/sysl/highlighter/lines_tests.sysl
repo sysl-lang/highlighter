@@ -1,0 +1,346 @@
+module sh.sysl.highlighter
+@tests
+
+import sysl.buf.{Buf, buf}
+import sysl.fs.{entries, read_bytes}
+import sysl.text.{Search, from_utf8, join, split, str_builder}
+
+// `tokenize_line`, the per-line API an editor drives: a line at a time from the state the line above
+// left, checked against `tokens` over the whole text, which the rest of the suite checks against
+// VS Code.
+
+private grammar(json: string) -> Highlighter = from_json(json).expect("the grammar loads")
+
+private corpus_dir() -> string
+    val here = __FILE__
+
+    s"${here[0..<here.last_index_of("/sh/sysl/highlighter/").unwrap()]}/equivalence"
+
+private read_text(p: string) -> string = from_utf8(read_bytes(p).expect(s"${p} reads")).expect(s"${p} is UTF-8")
+
+// Every line of `text` fed in order from the initial state: each line's tokens, and the state after
+// the last.
+private by_lines(h: Highlighter, text: string) -> (Buf[Buf[Token]], LineState)
+    var out: Buf[Buf[Token]] = buf()
+    var state = h.initial_state()
+
+    for line in split(text, "\n")
+        val r = h.tokenize_line(line, state).expect("the line tokenizes")
+
+        out.push(r.tokens)
+        state = r.state
+
+    (out, state)
+end by_lines
+
+private same_tokens(a: Buf[Token], b: Buf[Token]) -> bool
+    if a.len() != b.len() then return false
+
+    for i in 0..<a.len()
+        if a[i].text != b[i].text || !same_scopes(a[i].scopes, b[i].scopes) then return false
+
+    true
+
+private show(ts: Buf[Token]) -> string
+    var out = str_builder()
+
+    for t in ts.view()
+        out.push(s"[${t.text}|${join(t.scopes.view(), " ")}]")
+
+    out.finish()
+
+// The state after `line`, from `state`.
+private after(h: Highlighter, line: string, state: LineState) -> LineState = h.tokenize_line(line, state).expect("the line tokenizes").state
+
+private line_tokens(h: Highlighter, line: string, state: LineState) -> Buf[Token] = h.tokenize_line(line, state).expect("the line tokenizes").tokens
+
+private innermost(t: Token) -> string = t.scopes[t.scopes.len() - 1]
+
+private concat(ts: Buf[Token]) -> string
+    var out = str_builder()
+
+    for t in ts.view()
+        out.push(t.text)
+
+    out.finish()
+
+// --- line by line is the whole text ---
+
+@test("lines: every corpus file, fed a line at a time, tokenizes exactly as tokens(text) does")
+lines_corpus()
+    var files = 0
+    var lines: usize = 0
+    var bad: Buf[string] = buf()
+
+    for f in entries(corpus_dir()).expect("the corpus lists").view()
+        if !f.ends_with(".txt") then continue
+
+        val name = f[0..<f.len - 4]
+        val h = load(name[0..<name.index_of(".").unwrap()])
+        val text = read_text(s"${corpus_dir()}/${f}")
+        val whole = h.tokens(text)
+        val parts = by_lines(h, text).0
+
+        assert_eq(whole.len(), parts.len())
+
+        for i in 0..<whole.len()
+            if !same_tokens(whole[i], parts[i]) then bad.push(s"${name}:${i + 1}: ${show(parts[i])} vs ${show(whole[i])}")
+
+        files += 1
+        lines += whole.len()
+
+    assert_eq(files, 24)
+    assert(lines > 400, s"${lines} lines")
+    assert(bad.len() == 0, join(bad.view(), "\n"))
+end lines_corpus
+
+@test("lines: the corpus tokenized twice ends in equal states, line for line")
+lines_corpus_states_repeat()
+    for lang in ["python", "rust", "html", "bash", "yaml", "typescript"]
+        val h = load(lang)
+        val text = read_text(s"${corpus_dir()}/${lang}.1.txt")
+        var a = h.initial_state()
+        var b = h.initial_state()
+
+        for line in split(text, "\n")
+            a = after(h, line, a)
+            b = after(h, line, b)
+            assert(a == b, s"${lang}: ${line}")
+end lines_corpus_states_repeat
+
+@test("lines: a state is not changed by tokenizing from it")
+lines_state_untouched()
+    val h = load("python")
+    val s = after(h, "x = \"\"\"open", h.initial_state())
+    val first = line_tokens(h, "still inside", s)
+    val again = line_tokens(h, "still inside", s)
+
+    assert(same_tokens(first, again), s"${show(first)} vs ${show(again)}")
+    assert_eq(innermost(first[0]), "string.quoted.multi.python")
+
+// --- state equality, as an editor uses it ---
+
+@test("lines: an edit that leaves a line's end state alone gives an equal state")
+lines_state_equal_after_edit()
+    val h = load("rust")
+    val s = after(h, "fn main() {", h.initial_state())
+
+    assert(after(h, "let x = 1;", s) == after(h, "let longer_name: u64 = 99 + 2; // and a comment", s))
+    assert(after(h, "", s) == after(h, "    ", s))
+
+@test("lines: an edit that opens a block comment gives a different state, and closing it an equal one")
+lines_state_comment_opens()
+    val h = load("rust")
+    val s = after(h, "fn main() {", h.initial_state())
+    val plain = after(h, "let x = 1;", s)
+    val open = after(h, "let x = 1; /* starts", s)
+
+    assert(plain != open)
+    assert(after(h, "ends */", open) == after(h, "", plain))
+
+@test("lines: the initial state equals itself and differs from the state after an empty first line")
+lines_state_initial()
+    val h = load("json")
+
+    assert(h.initial_state() == h.initial_state())
+    assert(h.initial_state() != after(h, "", h.initial_state()))
+    assert(after(h, "", h.initial_state()) == after(h, "  ", after(h, "", h.initial_state())))
+
+@test("lines: two strings opened by different delimiters leave different states")
+lines_state_backreference()
+    // A heredoc ends on the word its `begin` named: the `end` is made from the match, and the two
+    // states differ in it alone.
+    val h = grammar(raw"""
+        {
+          "scopeName": "source.h",
+          "patterns": [ { "begin": "<<(\\w+)", "end": "^\\1$", "name": "string.heredoc.h" } ]
+        }
+        """)
+    val a = after(h, "cat <<EOF", h.initial_state())
+    val b = after(h, "cat <<END", h.initial_state())
+
+    assert(a != b)
+    assert(a == after(h, "cat <<EOF", h.initial_state()))
+    assert(after(h, "EOF", a) == after(h, "END", b))
+    assert(after(h, "EOF", b) == b)
+
+// --- constructs that span lines ---
+
+@test("lines: a block comment spanning three lines is a comment on each")
+lines_block_comment()
+    val h = load("javascript")
+    var s = h.initial_state()
+    var cats: Buf[string] = buf()
+
+    for line in ["/* one", "two", "three */ let x = 1"]
+        val r = h.tokenize_line(line, s).expect("the line tokenizes")
+
+        cats.push(h.category_of(r.tokens[0]))
+        s = r.state
+
+    assert_eq(join(cats.view(), ","), "comment,comment,comment")
+
+    val last = line_tokens(h, "let y", s)
+
+    assert_eq(h.category_of(last[0]), "keyword")
+
+@test("lines: a Python triple-quoted string spanning lines is a string until it closes")
+lines_multiline_string()
+    val h = load("python")
+    val s1 = after(h, "s = \"\"\"first", h.initial_state())
+    val middle = line_tokens(h, "def not_a_keyword", s1)
+
+    assert_eq(middle.len(), 1)
+    assert_eq(h.category_of(middle[0]), "string")
+
+    val s2 = after(h, "def not_a_keyword", s1)
+    val closing = line_tokens(h, "end\"\"\" ; def f(): pass", s2)
+
+    assert(closing.len() > 2)
+    assert_eq(h.category_of(closing[0]), "string")
+
+    var saw_def = false
+
+    for t in closing.view()
+        if t.text == "def" && h.category_of(t) == "keyword" then saw_def = true
+
+    assert(saw_def, show(closing))
+
+// --- `\A` ---
+
+private anchored() -> Highlighter = grammar(raw"""
+    {
+      "scopeName": "source.a",
+      "patterns": [ { "match": "\\Ahead", "name": "keyword.head.a" } ]
+    }
+    """)
+
+@test("lines: \\A holds on the first line from the initial state and on no later line")
+lines_start_anchor()
+    val h = anchored()
+    val first = line_tokens(h, "head", h.initial_state())
+    val later = line_tokens(h, "head", after(h, "", h.initial_state()))
+
+    assert_eq(innermost(first[0]), "keyword.head.a")
+    assert_eq(innermost(later[0]), "source.a")
+
+    val whole = h.tokens("head\nhead")
+
+    assert(same_tokens(whole[0], first))
+    assert(same_tokens(whole[1], later))
+
+@test("lines: \\A holds only at the first line's start, not after something on it was matched")
+lines_start_anchor_not_mid_line()
+    val h = anchored()
+    val ts = line_tokens(h, "headhead", h.initial_state())
+
+    assert_eq(ts.len(), 2)
+    assert_eq(ts[0].text, "head")
+    assert_eq(innermost(ts[1]), "source.a")
+
+// --- the byte limit ---
+
+@test("lines: a 1 MB line is matched to the limit and the rest is one token under the grammar's scope")
+lines_limit_megabyte()
+    val h = load("json")
+    var b = str_builder()
+
+    b.push("[")
+
+    for _ in 0..<200000
+        b.push("1234,")
+
+    b.push("0]")
+
+    val line = b.finish()
+    val r = h.tokenize_line(line, h.initial_state()).expect("the line tokenizes")
+    val last = r.tokens[r.tokens.len() - 1]
+
+    assert(line.len > 1000000)
+    assert_eq(concat(r.tokens), line)
+    assert_eq(join(last.scopes.view(), " "), "source.json")
+    assert_eq(last.text.len, line.len - 20000)
+    assert_eq(h.category_of(r.tokens[1]), "number")
+
+@test("lines: a line no longer than the limit is matched whole")
+lines_limit_exact()
+    val h = load("json")
+    val line = "[1, \"two\"]"
+    val whole = h.tokens(line)[0]
+
+    assert(same_tokens(line_tokens(h, line, h.initial_state()), whole))
+    assert(same_tokens(h.tokenize_line(line, h.initial_state(), line.len).expect("tokenizes").tokens, whole))
+
+    val cut = h.tokenize_line(line, h.initial_state(), line.len - 1).expect("tokenizes").tokens
+
+    assert_eq(cut[cut.len() - 1].text, "]")
+    assert_eq(innermost(cut[cut.len() - 1]), "source.json")
+
+@test("lines: a limit inside a character backs off to the character's start")
+lines_limit_utf8()
+    val h = load("python")
+    val line = "x = \"naïve\""
+
+    // `ï` is two bytes, at 7 and 8: a limit of 8 falls between them.
+    val ts = h.tokenize_line(line, h.initial_state(), 8).expect("tokenizes").tokens
+
+    assert_eq(concat(ts), line)
+    assert_eq(ts[ts.len() - 1].text, "ïve\"")
+
+@test("lines: a limit of zero makes the whole line one plain token")
+lines_limit_zero()
+    val h = load("rust")
+    val ts = h.tokenize_line("fn main() {}", h.initial_state(), 0).expect("tokenizes").tokens
+
+    assert_eq(ts.len(), 1)
+    assert_eq(ts[0].text, "fn main() {}")
+    assert_eq(join(ts[0].scopes.view(), " "), "source.rust")
+
+@test("lines: a pair open where the limit cut the line stays open on the next")
+lines_limit_keeps_pairs()
+    val h = load("python")
+    val r = h.tokenize_line("s = \"\"\"abc def ghi", h.initial_state(), 10).expect("tokenizes")
+    val next = line_tokens(h, "def", r.state)
+
+    assert_eq(innermost(r.tokens[r.tokens.len() - 1]), "source.python")
+    assert_eq(h.category_of(next[0]), "string")
+
+@test("lines: \\G does not carry past a line the limit cut")
+lines_limit_clears_line_end_anchor()
+    // The `begin` runs to the end of its line, so `\G` holds at the next line's start — unless the
+    // line was cut, when its end was never reached.
+    val h = grammar(raw"""
+        {
+          "scopeName": "source.g",
+          "patterns": [
+            { "begin": "<<\\n?", "end": "(?!\\G)", "name": "meta.g",
+              "patterns": [ { "match": "\\Gx", "name": "keyword.g" } ] }
+          ]
+        }
+        """)
+    val whole = after(h, "<<", h.initial_state())
+    val cut = h.tokenize_line("<<zzz", h.initial_state(), 2).expect("tokenizes").state
+
+    assert(whole != cut)
+    assert_eq(innermost(line_tokens(h, "x", whole)[0]), "keyword.g")
+
+// --- what is refused ---
+
+@test("lines: a line holding a newline is refused")
+lines_refuse_newline()
+    val h = load("json")
+
+    h.tokenize_line("[1,\n2]", h.initial_state()) match
+        Ok(_) -> panic("a line with a newline was tokenized")
+        Err(e) -> assert(e.contains("newline"), e)
+
+@test("lines: a state another grammar made is refused, naming both grammars")
+lines_refuse_other_grammar()
+    val json = load("json")
+    val rust = load("rust")
+
+    rust.tokenize_line("fn", json.initial_state()) match
+        Ok(_) -> panic("a JSON state was used with the Rust grammar")
+        Err(e) -> assert(e.contains("source.json") && e.contains("source.rust"), e)
+
+    assert(json.initial_state() != after(json, "", json.initial_state()))

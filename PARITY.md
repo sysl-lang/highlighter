@@ -237,7 +237,7 @@ Thirty-four sysl tests have no Scala counterpart, because the Scala library has 
 
 | sysl test | why |
 |---|---|
-| sysl_grammar_tests: `sysl grammar:` x27 | they test sysl's own grammar (`test-grammars/sysl.tmLanguage.json`, a byte-identical copy of sysl `faf3b48a`'s `docs/grammars/sysl.tmLanguage.json`) against sysl's lexical rules; the Scala suite carries no sysl grammar, and the subject is the grammar rather than the tokenizer |
+| sysl_grammar_tests: `sysl grammar:` x27 | they test sysl's own grammar (`grammars/sysl.tmLanguage.json`, a byte-identical copy of sysl `faf3b48a`'s `docs/grammars/sysl.tmLanguage.json`) against sysl's lexical rules; the Scala suite carries no sysl grammar, and the subject is the grammar rather than the tokenizer |
 | port_tests: `languages:` x3 | `Languages` (a registry that picks a grammar by a fenced block's first word) does not exist in the Scala library |
 | port_tests: `markdown:` hook | the hook composes with `sh.sysl.markdown`, a sysl package |
 | readme_tests: `README:` x3 | they run the sysl README's examples against its text |

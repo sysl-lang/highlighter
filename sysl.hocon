@@ -3,16 +3,16 @@
 // This is the block a consumer writes to reach it:
 //
 //     dependencies {
-//       highlighter { git = "github.com/sysl-lang/highlighter", version = "0.1.4" }
+//       highlighter { git = "github.com/sysl-lang/highlighter", version = "0.2.0" }
 //     }
 //
 // The module a program imports is `sh.sysl.highlighter`.
 package {
   name    = "highlighter"
-  version = "0.1.4"
+  version = "0.2.0"
 
   // The compiler this was written and tested against.
-  sysl = "0.6.0"
+  sysl = "0.7.5"
 }
 
 dependencies {
@@ -28,7 +28,7 @@ dev_dependencies {
 
 // **`heap`**, because a grammar's rules, a line's tokens and the HTML are all sized by the input.
 // **`posix`** comes with Oniguruma, a hosted library. **Not `os`**: nothing here opens a file — a
-// grammar is handed over as the text the caller already read.
+// grammar is handed over as the text the caller already read, or the text embedded while compiling.
 requires {
   heap  = true
   posix = true
