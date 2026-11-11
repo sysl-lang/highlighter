@@ -3,21 +3,21 @@
 // This is the block a consumer writes to reach it:
 //
 //     dependencies {
-//       highlighter { git = "github.com/sysl-lang/highlighter", version = "0.2.1" }
+//       highlighter { git = "github.com/sysl-lang/highlighter", version = "0.2.2" }
 //     }
 //
 // The module a program imports is `sh.sysl.highlighter`.
 package {
   name    = "highlighter"
-  version = "0.2.1"
+  version = "0.2.2"
 
   // The compiler this was written and tested against.
   sysl = "0.9.0"
 }
 
 dependencies {
-  oniguruma { git = "github.com/sysl-lang/oniguruma", version = "0.1.4" }
-  json      { git = "github.com/sysl-lang/json", version = "0.2.4" }
+  oniguruma { git = "github.com/sysl-lang/oniguruma", version = "0.1.5" }
+  json      { git = "github.com/sysl-lang/json", version = "0.2.5" }
 }
 
 // The composition with Markdown is checked by the suite and costs a consumer nothing: a program that

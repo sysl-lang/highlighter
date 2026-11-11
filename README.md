@@ -6,7 +6,7 @@ the tokens themselves, for a renderer of your own.
 
 ```hocon
 dependencies {
-  highlighter { git = "github.com/sysl-lang/highlighter", version = "0.2.1" }
+  highlighter { git = "github.com/sysl-lang/highlighter", version = "0.2.2" }
 }
 ```
 
