@@ -1,4 +1,6 @@
 github.com/sysl-lang/json v0.2.4 sha256:9dbc05db3559ebac3286fda5f4ab0c3991ba748c3b82f982b930168f049bc40d
 github.com/sysl-lang/markdown v0.4.4 sha256:3f1ba2876f220e744077c3ba3543bf8ec86a91378540ee667366c0da16b18f56
+github.com/sysl-lang/markdown v0.4.5 sha256:6cff494aed7cc5d80250385ffacb0e1bd44282997c1860f39ebb90a75d7bb1ba
 github.com/sysl-lang/oniguruma v0.1.4 sha256:2552d8684933d536c851f3368dbadaa2c1ef2168d2347ae57bad00b866ea8e68
 github.com/sysl-lang/parsing v0.14.1 sha256:a8da830d00560772bc997c0f58d61d22a65fdcabd66c95c685528eb241c08038
+github.com/sysl-lang/parsing v0.14.2 sha256:6a71afa1772c34482ca86d0d1af334e49f2fc19cf88356028b86b17335a42bcb
